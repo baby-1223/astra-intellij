@@ -1,0 +1,17 @@
+<idea-plugin>
+    <id>com.astra.intellij</id>
+    <name>Astra</name>
+    <version>0.1.0</version>
+    <vendor>APost</vendor>
+    <description><![CDATA[
+        本地优先的 API 调试工具：集合、环境变量、HTTP 请求、JSON 响应、cURL 导入导出与历史记录。
+    ]]></description>
+    <idea-version since-build="242"/>
+    <depends>com.intellij.modules.platform</depends>
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Astra"
+                    anchor="right"
+                    factoryClass="com.astra.intellij.ui.AstraToolWindowFactory"
+                    icon="/icons/astra.svg"/>
+    </extensions>
+</idea-plugin>
