@@ -43,4 +43,35 @@ object TreeOperations {
         attach(target, source)
         return true
     }
+
+    /** Removes a collection/folder/request at any depth. Reference match first, then non-blank id. */
+    fun remove(workspace: WorkspaceData, value: Any): Boolean {
+        fun idOf(item: Any): String? = when (item) {
+            is RequestCollection -> item.id
+            is RequestFolder -> item.id
+            is AstraRequest -> item.id
+            else -> null
+        }
+
+        fun same(item: Any): Boolean =
+            item === value || (!idOf(value).isNullOrEmpty() && idOf(item) == idOf(value))
+
+        var removed = false
+        when (value) {
+            is RequestCollection -> removed = workspace.collections.removeAll { same(it) }
+            is RequestFolder -> workspace.collections.forEach { collection ->
+                if (collection.folders.removeAll { same(it) }) removed = true
+                collection.allFolders().forEach { folder ->
+                    if (folder.folders.removeAll { same(it) }) removed = true
+                }
+            }
+            is AstraRequest -> workspace.collections.forEach { collection ->
+                if (collection.requests.removeAll { same(it) }) removed = true
+                collection.allFolders().forEach { folder ->
+                    if (folder.requests.removeAll { same(it) }) removed = true
+                }
+            }
+        }
+        return removed
+    }
 }

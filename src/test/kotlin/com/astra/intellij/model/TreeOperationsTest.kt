@@ -83,4 +83,60 @@ class TreeOperationsTest {
         assertTrue(inner.requests.isEmpty())
         assertEquals(listOf(request), target.requests)
     }
+
+    @Test
+    fun `removes a deeply nested request`() {
+        val (workspace, collection) = workspace()
+        val outer = RequestFolder(name = "outer")
+        val inner = RequestFolder(name = "inner")
+        val request = AstraRequest(name = "r")
+        val sibling = AstraRequest(name = "sibling")
+        inner.requests.add(request)
+        inner.requests.add(sibling)
+        outer.folders.add(inner)
+        collection.folders.add(outer)
+
+        assertTrue(TreeOperations.remove(workspace, request))
+        assertEquals(listOf(sibling), inner.requests)
+        assertEquals(1, collection.folders.size)
+    }
+
+    @Test
+    fun `removes a nested folder with its children`() {
+        val (workspace, collection) = workspace()
+        val outer = RequestFolder(name = "outer")
+        val inner = RequestFolder(name = "inner")
+        inner.requests.add(AstraRequest(name = "r"))
+        outer.folders.add(inner)
+        collection.folders.add(outer)
+
+        assertTrue(TreeOperations.remove(workspace, inner))
+        assertTrue(outer.folders.isEmpty())
+        assertFalse(TreeOperations.remove(workspace, inner))
+    }
+
+    @Test
+    fun `removes a whole collection`() {
+        val (workspace, collection) = workspace()
+        val other = RequestCollection(name = "other")
+        workspace.collections.add(other)
+
+        assertTrue(TreeOperations.remove(workspace, collection))
+        assertEquals(listOf(other), workspace.collections)
+    }
+
+    @Test
+    fun `legacy items without ids never delete each other`() {
+        val gson = com.google.gson.Gson()
+        val workspace = WorkspaceData()
+        val first = gson.fromJson("""{"name":"a"}""", AstraRequest::class.java)
+        val second = gson.fromJson("""{"name":"b"}""", AstraRequest::class.java)
+        val collection = RequestCollection(name = "c")
+        collection.requests.add(first)
+        collection.requests.add(second)
+        workspace.collections.add(collection)
+
+        assertTrue(TreeOperations.remove(workspace, first))
+        assertEquals(listOf(second), collection.requests)
+    }
 }

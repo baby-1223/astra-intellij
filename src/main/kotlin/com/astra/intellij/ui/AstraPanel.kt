@@ -649,35 +649,15 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     }
 
     private fun deleteValue(value: Any) {
-        fun removeFolder(folder: RequestFolder, id: String) {
-            folder.folders.removeAll { it.id == id }
-            folder.folders.forEach { removeFolder(it, id) }
-        }
-
-        fun removeRequest(folder: RequestFolder, id: String) {
-            folder.requests.removeAll { it.id == id }
-            folder.folders.forEach { removeRequest(it, id) }
-        }
-
-        when (value) {
-            is RequestCollection -> workspace.data.collections.removeAll { it.id == value.id }
-            is RequestFolder -> workspace.data.collections.forEach { collection ->
-                collection.folders.removeAll { it.id == value.id }
-                collection.folders.forEach { removeFolder(it, value.id) }
-            }
-            is AstraRequest -> workspace.data.collections.forEach { collection ->
-                collection.requests.removeAll { it.id == value.id }
-                collection.folders.forEach { removeRequest(it, value.id) }
-            }
-            else -> return
-        }
+        if (!com.astra.intellij.model.TreeOperations.remove(workspace.data, value)) return
+        // Repaint first so a failing tab close can never leave a stale node on screen.
+        refreshTree()
         sessions.filter { session ->
             val bound = session.savedRequest
             bound != null && workspace.data.collections.none { collection ->
                 collection.allRequests().any { it === bound }
             }
-        }.forEach { closeSession(it) }
-        refreshTree()
+        }.forEach { runCatching { closeSession(it) } }
     }
 
     private fun editEnvironments() {
