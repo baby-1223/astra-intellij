@@ -85,6 +85,7 @@ class RequestSessionPanel(
 
     fun save() {
         commitEditor()
+        editor.finishNameEditing()
         if (savedRequest == null) onSaveToCollection(this) else onStructureChanged()
         response.showMessage("Request saved")
     }

@@ -83,10 +83,6 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         nameLabel.font = nameField.font
         nameCards.add(nameLabel, "label")
         nameCards.add(nameField, "field")
-        fun showNameLabel() {
-            nameLabel.text = nameField.text
-            (nameCards.layout as CardLayout).show(nameCards, "label")
-        }
         val editNameButton = JButton(AstraIcons.rename).apply {
             toolTipText = "Rename request"
             isBorderPainted = false
@@ -100,11 +96,11 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
                 nameField.selectAll()
             }
         }
-        nameField.addActionListener { showNameLabel() }
+        nameField.addActionListener { finishNameEditing() }
         nameField.addFocusListener(object : java.awt.event.FocusAdapter() {
-            override fun focusLost(e: java.awt.event.FocusEvent?) = showNameLabel()
+            override fun focusLost(e: java.awt.event.FocusEvent?) = finishNameEditing()
         })
-        showNameLabel()
+        finishNameEditing()
         top.add(JPanel(BorderLayout(2, 0)).apply {
             add(nameCards, BorderLayout.CENTER)
             add(editNameButton, BorderLayout.EAST)
@@ -154,6 +150,12 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         add(top, BorderLayout.NORTH)
         add(tabs, BorderLayout.CENTER)
         border = BorderFactory.createEmptyBorder(4, 4, 4, 4)
+    }
+
+    /** Leaves rename mode and shows the plain title, e.g. after Ctrl+S. */
+    fun finishNameEditing() {
+        nameLabel.text = nameField.text
+        (nameCards.layout as CardLayout).show(nameCards, "label")
     }
 
     fun showRequest(request: AstraRequest) {
