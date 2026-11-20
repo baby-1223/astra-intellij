@@ -220,12 +220,17 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
 
     private fun buildCollectionPanel(): JPanel {
         val panel = JPanel(BorderLayout())
-        val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 3, 3))
-        buttons.add(JButton("+ Collection").apply { addActionListener { addCollection() } })
-        panel.add(buttons, BorderLayout.NORTH)
         tree.isRootVisible = false
         tree.showsRootHandles = true
         tree.cellRenderer = object : DefaultTreeCellRenderer() {
+            init {
+                backgroundSelectionColor = com.intellij.ui.JBColor(0xD6E4FF, 0x2E436E)
+                backgroundNonSelectionColor = com.intellij.ui.JBColor.background()
+                textSelectionColor = com.intellij.ui.JBColor.foreground()
+                textNonSelectionColor = com.intellij.ui.JBColor.foreground()
+                borderSelectionColor = null
+            }
+
             override fun getTreeCellRendererComponent(
                 tree: JTree,
                 value: Any?,
@@ -238,13 +243,19 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, hasFocus)
                 val nodeValue = ((value as? DefaultMutableTreeNode)?.userObject as? Node)?.value
                 when (nodeValue) {
-                    is RequestCollection -> icon = AstraIcons.collection
-                    is RequestFolder -> icon = AstraIcons.folder
+                    is RequestCollection -> {
+                        icon = AstraIcons.collection
+                        text = "<html>${escapeHtml(nodeValue.name)}$DOTS_HTML</html>"
+                    }
+                    is RequestFolder -> {
+                        icon = AstraIcons.folder
+                        text = "<html>${escapeHtml(nodeValue.name)}$DOTS_HTML</html>"
+                    }
                     is AstraRequest -> {
                         icon = AstraIcons.request(nodeValue.method)
                         val methodColor = AstraIcons.methodColor(nodeValue.method)
                         text = "<html><span style='color:$methodColor'><b>${nodeValue.method}</b></span> " +
-                            escapeHtml(nodeValue.name) + "</html>"
+                            escapeHtml(nodeValue.name) + DOTS_HTML + "</html>"
                     }
                 }
                 return this
@@ -256,8 +267,23 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             if (value is AstraRequest) openRequest(value, bound = true)
         }
         tree.addMouseListener(object : MouseAdapter() {
-            override fun mousePressed(e: MouseEvent) = maybeShowPopup(e)
+            override fun mousePressed(e: MouseEvent) {
+                if (handleDotsClick(e)) return
+                maybeShowPopup(e)
+            }
+
             override fun mouseReleased(e: MouseEvent) = maybeShowPopup(e)
+
+            private fun handleDotsClick(e: MouseEvent): Boolean {
+                if (!javax.swing.SwingUtilities.isLeftMouseButton(e)) return false
+                val row = tree.getRowForLocation(e.x, e.y)
+                if (row < 0) return false
+                val bounds = tree.getRowBounds(row)
+                if (e.x < bounds.x + bounds.width - 28 || e.x > bounds.x + bounds.width + 6) return false
+                tree.selectionPath = tree.getPathForRow(row)
+                showCollectionPopup(e.x, e.y)
+                return true
+            }
 
             private fun maybeShowPopup(e: MouseEvent) {
                 if (!e.isPopupTrigger) return
@@ -747,5 +773,6 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     companion object {
         private const val NEW_TAB_ACTION = "astra.newTab"
         private const val CLOSE_TAB_ACTION = "astra.closeTab"
+        private const val DOTS_HTML = " <span style='color:#999999'>\u22EF</span>"
     }
 }
