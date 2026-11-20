@@ -30,7 +30,8 @@ import java.io.StringWriter
 
 class ResponsePanel : JPanel(BorderLayout()) {
     private val statusLabel = JLabel("No response yet")
-    private val bodyModeBox = JComboBox(arrayOf("Pretty", "Raw", "Preview"))
+    private val bodyModeButtons = listOf("Pretty", "Raw", "Preview").map { javax.swing.JToggleButton(it) }
+    private val bodyModeGroup = javax.swing.ButtonGroup()
     private val bodyFormatBox = JComboBox(arrayOf("Auto", "JSON", "XML", "HTML", "Text"))
     private val bodyContainer = JPanel(BorderLayout())
     private val headersModel = DefaultTableModel(arrayOf("Header", "Value"), 0)
@@ -47,15 +48,36 @@ class ResponsePanel : JPanel(BorderLayout()) {
     private var history = listOf<HistoryEntry>()
     private var lastResult: HttpResult? = null
     private var lastError: String? = null
+    private var lastBodyMode = 0
     var onHistorySelected: (HistoryEntry) -> Unit = {}
 
     init {
         val tabs = JTabbedPane()
-        val bodyToolbar = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
-            add(bodyModeBox)
+        bodyModeButtons.forEachIndexed { index, button ->
+            bodyModeGroup.add(button)
+            button.isFocusable = false
+            button.isBorderPainted = false
+            button.isContentAreaFilled = false
+            button.cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+            button.margin = java.awt.Insets(2, 4, 2, 4)
+            button.addActionListener {
+                lastBodyMode = index
+                updateBodyModeStyles()
+                if (lastResult != null || lastError != null) renderBody()
+            }
+        }
+        bodyModeButtons.first().isSelected = true
+        updateBodyModeStyles()
+        val bodyToolbar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 4)).apply {
+            bodyModeButtons.forEach { add(it) }
             add(bodyFormatBox)
             add(javax.swing.JButton("Copy").apply {
                 toolTipText = "Copy response body"
+                isBorderPainted = false
+                isContentAreaFilled = false
+                isFocusable = false
+                foreground = com.intellij.ui.JBColor.GRAY
+                cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
                 addActionListener {
                     val text = lastResult?.let { String(it.body, StandardCharsets.UTF_8) } ?: lastError.orEmpty()
                     if (text.isNotEmpty()) {
@@ -96,9 +118,15 @@ class ResponsePanel : JPanel(BorderLayout()) {
         add(tabs, BorderLayout.CENTER)
         statusLabel.border = BorderFactory.createEmptyBorder(4, 6, 4, 6)
         statusLabel.font = statusLabel.font.deriveFont(Font.BOLD)
-        bodyModeBox.addActionListener { renderBody() }
         bodyFormatBox.addActionListener { renderBody() }
         showBodyText("Send a request to see the response body here.")
+    }
+
+    private fun updateBodyModeStyles() {
+        bodyModeButtons.forEach { button ->
+            button.foreground = if (button.isSelected) INFO_COLOR else com.intellij.ui.JBColor.GRAY
+            button.font = button.font.deriveFont(if (button.isSelected) Font.BOLD else Font.PLAIN)
+        }
     }
 
     fun showMessage(message: String) {
@@ -177,10 +205,9 @@ class ResponsePanel : JPanel(BorderLayout()) {
         }
         val raw = String(result.body, StandardCharsets.UTF_8)
         val format = detectFormat(result, raw)
-        val mode = bodyModeBox.selectedItem?.toString() ?: "Pretty"
-        when (mode) {
-            "Raw" -> showBodyText(raw)
-            "Preview" -> showPreview(raw, format)
+        when (lastBodyMode) {
+            1 -> showBodyText(raw)
+            2 -> showPreview(raw, format)
             else -> showBodyText(prettify(raw, format))
         }
     }
