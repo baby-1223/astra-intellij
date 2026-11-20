@@ -254,7 +254,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 val row = tree.getRowForLocation(e.x, e.y)
                 if (row < 0) return false
                 val bounds = tree.getRowBounds(row)
-                if (e.x < bounds.x + bounds.width - 28 || e.x > bounds.x + bounds.width + 6) return false
+                // Only the vertical dots glyph itself opens the menu, not the whole row.
+                if (e.x < bounds.x + bounds.width - 18 || e.x > bounds.x + bounds.width) return false
                 tree.selectionPath = tree.getPathForRow(row)
                 showCollectionPopup(e.x, e.y)
                 return true
