@@ -75,12 +75,15 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
             fill = GridBagConstraints.HORIZONTAL
             anchor = GridBagConstraints.WEST
         }
-        top.add(nameField, c.at(0, 0.0))
-        top.add(methodBox, c.at(1, 0.0))
-        top.add(urlField, c.at(2, 1.0))
-        top.add(sendButton, c.at(3, 0.0))
-        top.add(cancelButton, c.at(4, 0.0))
-        nameField.columns = 14
+        nameField.font = nameField.font.deriveFont(java.awt.Font.BOLD)
+        nameField.toolTipText = "Request name (Ctrl+S to save)"
+        top.add(nameField, c.at(0, 1.0).apply { gridwidth = 4 })
+        c.gridy = 1
+        c.gridwidth = 1
+        top.add(methodBox, c.at(0, 0.0))
+        top.add(urlField, c.at(1, 1.0))
+        top.add(sendButton, c.at(2, 0.0))
+        top.add(cancelButton, c.at(3, 0.0))
         urlField.columns = 36
 
         val tabs = JTabbedPane()
