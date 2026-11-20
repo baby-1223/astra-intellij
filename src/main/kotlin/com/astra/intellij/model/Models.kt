@@ -27,6 +27,8 @@ data class AstraRequest(
     var headers: MutableList<KeyValue> = mutableListOf(),
     var bodyMode: String = "none",
     var body: String = "",
+    var formFields: MutableList<KeyValue> = mutableListOf(),
+    var assertions: MutableList<String> = mutableListOf(),
     var auth: AuthConfig = AuthConfig(),
 )
 

@@ -31,8 +31,8 @@ class KeyValueTable : JPanel(BorderLayout()) {
         table.columnModel.getColumn(1).cellRenderer = leftRenderer
         table.columnModel.getColumn(2).cellRenderer = leftRenderer
         (table.getDefaultEditor(String::class.java) as? javax.swing.DefaultCellEditor)?.clickCountToStart = 1
-        val add = JButton("Add")
-        val remove = JButton("Remove")
+        val add = JButton("+").apply { toolTipText = "Add row" }
+        val remove = JButton("−").apply { toolTipText = "Remove selected row" }
         add.addActionListener { model.addRow(arrayOf<Any>(true, "", "")) }
         remove.addActionListener {
             if (table.isEditing) table.cellEditor.stopCellEditing()

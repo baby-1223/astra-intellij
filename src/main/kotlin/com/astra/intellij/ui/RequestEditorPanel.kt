@@ -24,8 +24,11 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
     val urlField = JTextField()
     private val paramsTable = KeyValueTable()
     private val headersTable = KeyValueTable()
-    private val bodyModeBox = JComboBox(arrayOf("none", "json", "text"))
+    private val bodyModeBox = JComboBox(arrayOf("none", "json", "text", "form-data", "urlencoded"))
     private val bodyArea = JTextArea(10, 40)
+    private val formTable = KeyValueTable()
+    private val bodyCards = JPanel(CardLayout())
+    private val testsArea = JTextArea(6, 40)
     private val authTypeBox = JComboBox(arrayOf("none", "bearer", "basic", "apikey"))
     private val tokenField = JTextField()
     private val usernameField = JTextField()
@@ -43,6 +46,26 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         bodyArea.lineWrap = false
         bodyArea.font = JTextField().font
         cancelButton.isEnabled = false
+        sendButton.toolTipText = "Send request (Ctrl+Enter)"
+        sendButton.background = JBColor(java.awt.Color(0x2F6FED), java.awt.Color(0x3B82F6))
+        sendButton.foreground = java.awt.Color.WHITE
+        sendButton.isOpaque = true
+        sendButton.isBorderPainted = false
+        cancelButton.toolTipText = "Cancel the running request"
+        methodBox.renderer = object : javax.swing.DefaultListCellRenderer() {
+            override fun getListCellRendererComponent(
+                list: javax.swing.JList<*>?,
+                value: Any?,
+                index: Int,
+                isSelected: Boolean,
+                cellHasFocus: Boolean,
+            ): java.awt.Component {
+                super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                if (!isSelected) foreground = java.awt.Color.decode(AstraIcons.methodColor(value?.toString() ?: ""))
+                font = font.deriveFont(java.awt.Font.BOLD)
+                return this
+            }
+        }
 
         val top = JPanel(GridBagLayout())
         val c = GridBagConstraints().apply {
@@ -67,13 +90,23 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
                 add(JLabel("Type"))
                 add(bodyModeBox)
             }, BorderLayout.NORTH)
-            add(JScrollPane(bodyArea), BorderLayout.CENTER)
+            bodyCards.add(JScrollPane(bodyArea), "raw")
+            bodyCards.add(formTable, "form")
+            add(bodyCards, BorderLayout.CENTER)
         })
         tabs.addTab("Authorization", buildAuthPanel())
+        tabs.addTab("Tests", JPanel(BorderLayout(0, 4)).apply {
+            add(JLabel("<html>One assertion per line: <b>status 200</b> · <b>time &lt; 500</b> · " +
+                "<b>body contains ok</b> · <b>json $.code == 0</b> · <b>header Content-Type contains json</b></html>").apply {
+                foreground = JBColor.GRAY
+                border = BorderFactory.createEmptyBorder(4, 4, 0, 4)
+            }, BorderLayout.NORTH)
+            add(JScrollPane(testsArea), BorderLayout.CENTER)
+        })
         bodyModeBox.addActionListener {
-            bodyArea.isEnabled = bodyModeBox.selectedItem != "none"
+            updateBodyCard()
         }
-        bodyArea.isEnabled = false
+        updateBodyCard()
 
         add(top, BorderLayout.NORTH)
         add(tabs, BorderLayout.CENTER)
@@ -88,7 +121,9 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         headersTable.setValues(request.headers)
         bodyModeBox.selectedItem = request.bodyMode
         bodyArea.text = request.body
-        bodyArea.isEnabled = request.bodyMode != "none"
+        formTable.setValues(request.formFields)
+        testsArea.text = request.assertions.joinToString("\n")
+        updateBodyCard()
         authTypeBox.selectedItem = request.auth.type
         tokenField.text = request.auth.token
         usernameField.text = request.auth.username
@@ -107,6 +142,11 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         request.headers = headersTable.values()
         request.bodyMode = bodyModeBox.selectedItem.toString()
         request.body = bodyArea.text
+        request.formFields = formTable.values()
+        request.assertions = testsArea.text.lines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toMutableList()
         request.auth.type = authTypeBox.selectedItem.toString()
         request.auth.token = tokenField.text
         request.auth.username = usernameField.text
@@ -121,6 +161,14 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         sendButton.isEnabled = !sending
         sendButton.text = if (sending) "Sending..." else "Send"
         cancelButton.isEnabled = sending
+    }
+
+    private fun updateBodyCard() {
+        val mode = bodyModeBox.selectedItem?.toString() ?: "none"
+        val form = mode == "form-data" || mode == "urlencoded"
+        (bodyCards.layout as CardLayout).show(bodyCards, if (form) "form" else "raw")
+        bodyArea.isEnabled = mode != "none" && !form
+        formTable.isEnabled = form
     }
 
     private fun buildAuthPanel(): JPanel {

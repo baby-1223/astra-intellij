@@ -39,6 +39,11 @@ class ResponsePanel : JPanel(BorderLayout()) {
         override fun isCellEditable(row: Int, column: Int): Boolean = false
     }
     private val historyTable = JTable(historyModel)
+    private val testsModel = object : DefaultTableModel(arrayOf("Assertion", "Result", "Detail"), 0) {
+        override fun isCellEditable(row: Int, column: Int): Boolean = false
+    }
+    private val testsTable = JTable(testsModel)
+    private var baseStatus = "No response yet"
     private var history = listOf<HistoryEntry>()
     private var lastResult: HttpResult? = null
     private var lastError: String? = null
@@ -49,6 +54,16 @@ class ResponsePanel : JPanel(BorderLayout()) {
         val bodyToolbar = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
             add(bodyModeBox)
             add(bodyFormatBox)
+            add(javax.swing.JButton("Copy").apply {
+                toolTipText = "Copy response body"
+                addActionListener {
+                    val text = lastResult?.let { String(it.body, StandardCharsets.UTF_8) } ?: lastError.orEmpty()
+                    if (text.isNotEmpty()) {
+                        java.awt.Toolkit.getDefaultToolkit().systemClipboard
+                            .setContents(java.awt.datatransfer.StringSelection(text), null)
+                    }
+                }
+            })
         }
         val bodyPanel = JPanel(BorderLayout()).apply {
             add(bodyToolbar, BorderLayout.NORTH)
@@ -57,11 +72,20 @@ class ResponsePanel : JPanel(BorderLayout()) {
         tabs.addTab("Body", bodyPanel)
         tabs.addTab("Cookies", JScrollPane(JTable(cookiesModel)))
         tabs.addTab("Headers", JScrollPane(JTable(headersModel)))
-        val testResults = JTextArea("No tests were run for this request.").apply {
-            isEditable = false
-            border = BorderFactory.createEmptyBorder(8, 8, 8, 8)
+        testsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
+        val assertionRenderer = javax.swing.table.DefaultTableCellRenderer()
+        testsTable.columnModel.getColumn(1).cellRenderer = object : javax.swing.table.DefaultTableCellRenderer() {
+            override fun getTableCellRendererComponent(
+                table: JTable, value: Any?, isSelected: Boolean, hasFocus: Boolean, row: Int, column: Int,
+            ): java.awt.Component {
+                super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
+                foreground = if (value == "PASS") PASS_COLOR else FAIL_COLOR
+                font = font.deriveFont(Font.BOLD)
+                return this
+            }
         }
-        tabs.addTab("Test Results", JScrollPane(testResults))
+        testsTable.columnModel.getColumn(0).cellRenderer = assertionRenderer
+        tabs.addTab("Test Results", JScrollPane(testsTable))
         historyTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
         historyTable.selectionModel.addListSelectionListener {
             val row = historyTable.selectedRow
@@ -71,17 +95,23 @@ class ResponsePanel : JPanel(BorderLayout()) {
         add(statusLabel, BorderLayout.NORTH)
         add(tabs, BorderLayout.CENTER)
         statusLabel.border = BorderFactory.createEmptyBorder(4, 6, 4, 6)
+        statusLabel.font = statusLabel.font.deriveFont(Font.BOLD)
         bodyModeBox.addActionListener { renderBody() }
         bodyFormatBox.addActionListener { renderBody() }
         showBodyText("Send a request to see the response body here.")
     }
 
     fun showMessage(message: String) {
+        statusLabel.foreground = com.intellij.ui.JBColor.foreground()
+        baseStatus = message
         statusLabel.text = message
     }
 
     fun showLoading() {
-        statusLabel.text = "Sending request..."
+        statusLabel.foreground = com.intellij.ui.JBColor.foreground()
+        baseStatus = "Sending request..."
+        statusLabel.text = baseStatus
+        testsModel.rowCount = 0
         lastResult = null
         lastError = null
         showBodyText("Sending request...")
@@ -90,7 +120,14 @@ class ResponsePanel : JPanel(BorderLayout()) {
     fun showResult(result: HttpResult) {
         lastResult = result
         lastError = null
-        statusLabel.text = "${result.status} ${result.statusText}  ·  ${result.elapsedMs} ms  ·  ${formatBytes(result.body.size)}"
+        statusLabel.foreground = when (result.status) {
+            in 200..299 -> PASS_COLOR
+            in 300..399 -> INFO_COLOR
+            in 400..499 -> WARN_COLOR
+            else -> FAIL_COLOR
+        }
+        baseStatus = "${result.status} ${result.statusText}  ·  ${result.elapsedMs} ms  ·  ${formatBytes(result.body.size)}"
+        statusLabel.text = baseStatus
         headersModel.rowCount = 0
         result.headers.toSortedMap(String.CASE_INSENSITIVE_ORDER).forEach { (key, values) ->
             values.forEach { headersModel.addRow(arrayOf(key, it)) }
@@ -103,10 +140,23 @@ class ResponsePanel : JPanel(BorderLayout()) {
     }
 
     fun showError(message: String) {
-        statusLabel.text = "Request failed"
+        statusLabel.foreground = FAIL_COLOR
+        baseStatus = "Request failed"
+        statusLabel.text = baseStatus
         lastResult = null
         lastError = message
         renderBody()
+    }
+
+    fun showTestResults(results: List<com.astra.intellij.core.AssertionResult>) {
+        testsModel.rowCount = 0
+        results.forEach {
+            testsModel.addRow(arrayOf(it.assertion, if (it.passed) "PASS" else "FAIL", it.detail))
+        }
+        if (results.isNotEmpty()) {
+            val passed = results.count { it.passed }
+            statusLabel.text = "$baseStatus  ·  Tests $passed/${results.size}"
+        }
     }
 
     fun setHistory(entries: List<HistoryEntry>) {
@@ -208,5 +258,12 @@ class ResponsePanel : JPanel(BorderLayout()) {
         size < 1024 -> "$size B"
         size < 1024 * 1024 -> "%.1f KB".format(size / 1024.0)
         else -> "%.1f MB".format(size / 1024.0 / 1024.0)
+    }
+
+    companion object {
+        private val PASS_COLOR = com.intellij.ui.JBColor(java.awt.Color(0x1F7A4D), java.awt.Color(0x4CC38A))
+        private val FAIL_COLOR = com.intellij.ui.JBColor(java.awt.Color(0xC93B3B), java.awt.Color(0xFF6B6B))
+        private val WARN_COLOR = com.intellij.ui.JBColor(java.awt.Color(0xB0720F), java.awt.Color(0xE8A33D))
+        private val INFO_COLOR = com.intellij.ui.JBColor(java.awt.Color(0x2F6FED), java.awt.Color(0x5EA8FF))
     }
 }

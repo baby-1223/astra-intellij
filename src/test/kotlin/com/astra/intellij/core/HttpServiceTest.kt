@@ -160,6 +160,45 @@ class HttpServiceTest {
         assertEquals("existing=a%20b|null", String(result.body, StandardCharsets.UTF_8))
     }
 
+    @Test
+    fun `sends urlencoded form body`() {
+        val request = AstraRequest(
+            method = "POST",
+            url = "$baseUrl/json",
+            bodyMode = "urlencoded",
+            formFields = mutableListOf(
+                KeyValue(key = "user name", value = "{{name}}"),
+                KeyValue(enabled = false, key = "ignored", value = "yes"),
+            ),
+        )
+
+        val result = service.send(request, mapOf("name" to "a b")).result()
+
+        assertEquals(
+            "POST|application/x-www-form-urlencoded|user+name=a+b",
+            String(result.body, StandardCharsets.UTF_8),
+        )
+    }
+
+    @Test
+    fun `sends multipart form data body`() {
+        val request = AstraRequest(
+            method = "POST",
+            url = "$baseUrl/json",
+            bodyMode = "form-data",
+            formFields = mutableListOf(KeyValue(key = "field", value = "{{value}}")),
+        )
+
+        val result = service.send(request, mapOf("value" to "hello")).result()
+
+        val parts = String(result.body, StandardCharsets.UTF_8).split("|", limit = 3)
+        assertEquals("POST", parts[0])
+        assertTrue(parts[1].startsWith("multipart/form-data; boundary=----Astra"))
+        assertTrue(parts[2].contains("Content-Disposition: form-data; name=\"field\""))
+        assertTrue(parts[2].contains("hello"))
+        assertTrue(parts[2].contains("--\r\n"))
+    }
+
     private fun HttpCall.result() = future.get(5, TimeUnit.SECONDS)
 
     private fun handle(exchange: HttpExchange) {

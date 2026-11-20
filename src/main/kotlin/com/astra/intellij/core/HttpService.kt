@@ -3,6 +3,7 @@ package com.astra.intellij.core
 import com.astra.intellij.model.AstraRequest
 import com.astra.intellij.model.CookieData
 import com.astra.intellij.model.HttpResult
+import com.astra.intellij.model.KeyValue
 import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpClient
@@ -60,13 +61,19 @@ class HttpService(
         }
 
         val hasBody = method != "GET" && method != "HEAD" && request.bodyMode != "none"
+        val boundary = "----Astra${java.util.UUID.randomUUID().toString().replace("-", "")}"
         if (hasBody && request.headers.none {
                 it.enabled && it.key.equals("Content-Type", ignoreCase = true)
             }
         ) {
             builder.header(
                 "Content-Type",
-                if (request.bodyMode == "json") "application/json" else "text/plain; charset=utf-8",
+                when (request.bodyMode) {
+                    "json" -> "application/json"
+                    "urlencoded" -> "application/x-www-form-urlencoded"
+                    "form-data" -> "multipart/form-data; boundary=$boundary"
+                    else -> "text/plain; charset=utf-8"
+                },
             )
         }
 
@@ -91,15 +98,41 @@ class HttpService(
             }
         }
 
-        val body = if (hasBody) {
-            HttpRequest.BodyPublishers.ofString(
+        val body = if (!hasBody) {
+            HttpRequest.BodyPublishers.noBody()
+        } else when (request.bodyMode) {
+            "urlencoded" -> HttpRequest.BodyPublishers.ofString(
+                request.formFields
+                    .filter { it.enabled && it.key.isNotBlank() }
+                    .joinToString("&") {
+                        "${encodeQueryComponent(VariableResolver.resolve(it.key, vars))}=" +
+                            encodeQueryComponent(VariableResolver.resolve(it.value, vars))
+                    },
+                StandardCharsets.UTF_8,
+            )
+            "form-data" -> HttpRequest.BodyPublishers.ofByteArray(
+                multipartBody(request.formFields, boundary, vars),
+            )
+            else -> HttpRequest.BodyPublishers.ofString(
                 VariableResolver.resolve(request.body, vars),
                 StandardCharsets.UTF_8,
             )
-        } else {
-            HttpRequest.BodyPublishers.noBody()
         }
         return builder.method(method, body).build()
+    }
+
+    private fun multipartBody(fields: List<KeyValue>, boundary: String, vars: Map<String, String>): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        fields.filter { it.enabled && it.key.isNotBlank() }.forEach { field ->
+            val name = VariableResolver.resolve(field.key, vars).replace("\"", "\\\"")
+            val value = VariableResolver.resolve(field.value, vars)
+            out.write("--$boundary\r\n".toByteArray(StandardCharsets.UTF_8))
+            out.write("Content-Disposition: form-data; name=\"$name\"\r\n\r\n".toByteArray(StandardCharsets.UTF_8))
+            out.write(value.toByteArray(StandardCharsets.UTF_8))
+            out.write("\r\n".toByteArray(StandardCharsets.UTF_8))
+        }
+        out.write("--$boundary--\r\n".toByteArray(StandardCharsets.UTF_8))
+        return out.toByteArray()
     }
 
     private fun parseCookies(headers: List<String>): MutableList<CookieData> =
