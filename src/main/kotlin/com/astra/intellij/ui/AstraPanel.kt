@@ -23,13 +23,18 @@ import java.awt.Component
 import java.awt.FlowLayout
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
+import java.awt.event.ActionEvent
+import java.awt.event.InputEvent
+import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.io.File
 import java.nio.file.Files
+import javax.swing.AbstractAction
 import javax.swing.DefaultComboBoxModel
 import javax.swing.JButton
 import javax.swing.JComboBox
+import javax.swing.JComponent
 import javax.swing.JFileChooser
 import javax.swing.JOptionPane
 import javax.swing.JPanel
@@ -38,6 +43,7 @@ import javax.swing.JScrollPane
 import javax.swing.JSplitPane
 import javax.swing.JTextArea
 import javax.swing.JTree
+import javax.swing.KeyStroke
 import javax.swing.filechooser.FileNameExtensionFilter
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeCellRenderer
@@ -81,6 +87,19 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         refreshEnvironments()
         refreshTree()
         response.setHistory(workspace.data.history)
+        registerSaveShortcut()
+    }
+
+    private fun registerSaveShortcut() {
+        editor.urlField.toolTipText = "Ctrl+S / Cmd+S to save this request"
+        val inputMap = editor.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK), SAVE_ACTION_KEY)
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.META_DOWN_MASK), SAVE_ACTION_KEY)
+        editor.actionMap.put(SAVE_ACTION_KEY, object : AbstractAction() {
+            override fun actionPerformed(e: ActionEvent?) {
+                saveCurrent()
+            }
+        })
     }
 
     private fun buildToolbar(): JPanel = JPanel(WrapLayout(FlowLayout.LEFT, 6, 4)).apply {
@@ -93,7 +112,6 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             }
         }
         add(JButton("Manage").apply { addActionListener { editEnvironments() } })
-        add(JButton("Save").apply { addActionListener { saveCurrent() } })
         add(JButton("Import \u25BE").apply {
             addActionListener {
                 showMenu(this, listOf(
@@ -597,5 +615,9 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
 
     private data class Node(val label: String, val value: Any) {
         override fun toString(): String = label
+    }
+
+    companion object {
+        private const val SAVE_ACTION_KEY = "astra.saveRequest"
     }
 }

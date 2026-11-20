@@ -21,7 +21,7 @@ import javax.swing.JTextField
 class RequestEditorPanel : JPanel(BorderLayout()) {
     private val nameField = JTextField("New Request")
     private val methodBox = JComboBox(arrayOf("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"))
-    private val urlField = JTextField()
+    val urlField = JTextField()
     private val paramsTable = KeyValueTable()
     private val headersTable = KeyValueTable()
     private val bodyModeBox = JComboBox(arrayOf("none", "json", "text"))
