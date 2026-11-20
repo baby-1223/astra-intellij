@@ -161,8 +161,15 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             ): Component {
                 super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, hasFocus)
                 val nodeValue = ((value as? DefaultMutableTreeNode)?.userObject as? Node)?.value
-                if (nodeValue is RequestCollection || nodeValue is RequestFolder) {
-                    icon = if (expanded) openIcon else closedIcon
+                when (nodeValue) {
+                    is RequestCollection -> icon = AstraIcons.collection
+                    is RequestFolder -> icon = AstraIcons.folder
+                    is AstraRequest -> {
+                        icon = AstraIcons.request(nodeValue.method)
+                        val methodColor = AstraIcons.methodColor(nodeValue.method)
+                        text = "<html><span style='color:$methodColor'><b>${nodeValue.method}</b></span> " +
+                            escapeHtml(nodeValue.name) + "</html>"
+                    }
                 }
                 return this
             }
@@ -508,6 +515,17 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             response.showMessage("Exported to ${file.name}")
         } catch (error: Exception) {
             Messages.showErrorDialog(project, error.message ?: "Unable to write file", "Export failed")
+        }
+    }
+
+    private fun escapeHtml(text: String): String = buildString {
+        text.forEach { char ->
+            when (char) {
+                '&' -> append("&amp;")
+                '<' -> append("&lt;")
+                '>' -> append("&gt;")
+                else -> append(char)
+            }
         }
     }
 
