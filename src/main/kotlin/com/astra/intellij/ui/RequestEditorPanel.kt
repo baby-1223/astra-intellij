@@ -222,14 +222,20 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
     }
 
     private fun buildAuthPanel(): JPanel {
-        val none = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 4))
-        none.add(JLabel("This request does not use any authorization.").apply { foreground = JBColor.GRAY })
-        val bearer = labeledField("Bearer Token", tokenField)
+        val none = JPanel(BorderLayout()).apply {
+            add(JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 4)).apply {
+                add(JLabel("This request does not use any authorization.").apply { foreground = JBColor.GRAY })
+            }, BorderLayout.NORTH)
+        }
+        val bearer = JPanel(BorderLayout()).apply {
+            add(labeledField("Bearer Token", tokenField), BorderLayout.NORTH)
+        }
         val basic = JPanel(GridBagLayout())
         basic.add(JLabel("Username"), grid(0, 0))
         basic.add(usernameField, grid(1, 0, 1.0))
         basic.add(JLabel("Password"), grid(0, 1))
         basic.add(passwordField, grid(1, 1, 1.0))
+        basic.add(javax.swing.Box.createVerticalGlue(), grid(0, 2).apply { weighty = 1.0; gridwidth = 2 })
         val api = JPanel(GridBagLayout())
         api.add(JLabel("Key"), grid(0, 0))
         api.add(apiKeyNameField, grid(1, 0, 1.0))
@@ -237,6 +243,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         api.add(apiKeyValueField, grid(1, 1, 1.0))
         api.add(JLabel("Add to"), grid(0, 2))
         api.add(apiKeyInBox, grid(1, 2, 1.0))
+        api.add(javax.swing.Box.createVerticalGlue(), grid(0, 3).apply { weighty = 1.0; gridwidth = 2 })
         authCards.add(none, "none")
         authCards.add(bearer, "bearer")
         authCards.add(basic, "basic")
