@@ -3,6 +3,8 @@ package com.astra.intellij.ui
 import com.astra.intellij.core.CurlService
 import com.astra.intellij.core.HttpCall
 import com.astra.intellij.core.HttpService
+import com.astra.intellij.core.OpenApiService
+import com.astra.intellij.core.PostmanService
 import com.astra.intellij.model.AstraRequest
 import com.astra.intellij.model.HistoryEntry
 import com.astra.intellij.model.RequestCollection
@@ -19,15 +21,20 @@ import java.awt.BorderLayout
 import java.awt.FlowLayout
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
+import java.io.File
+import java.nio.file.Files
 import javax.swing.DefaultComboBoxModel
 import javax.swing.JButton
 import javax.swing.JComboBox
+import javax.swing.JFileChooser
 import javax.swing.JOptionPane
 import javax.swing.JPanel
+import javax.swing.JPopupMenu
 import javax.swing.JScrollPane
 import javax.swing.JSplitPane
 import javax.swing.JTextArea
 import javax.swing.JTree
+import javax.swing.filechooser.FileNameExtensionFilter
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
@@ -39,6 +46,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private val tree = JTree()
     private val http = HttpService()
     private val curl = CurlService()
+    private val postman = PostmanService()
+    private val openApi = OpenApiService()
     private val gson = Gson()
     private var currentRequest = AstraRequest()
     private var savedRequest: AstraRequest? = null
@@ -82,6 +91,32 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         add(JButton("Import cURL").apply { addActionListener { importCurl() } })
         add(JButton("Copy cURL").apply { addActionListener { exportCurl() } })
         add(JButton("Save").apply { addActionListener { saveCurrent() } })
+        add(JButton("Import \u25BE").apply {
+            addActionListener {
+                showMenu(this, listOf(
+                    "Postman Collection" to ::importPostmanCollection,
+                    "Postman Environment" to ::importPostmanEnvironment,
+                    "OpenAPI / Swagger JSON" to ::importOpenApi,
+                ))
+            }
+        })
+        add(JButton("Export \u25BE").apply {
+            addActionListener {
+                showMenu(this, listOf(
+                    "Postman Collection" to ::exportPostmanCollection,
+                    "Postman Environment" to ::exportPostmanEnvironment,
+                    "OpenAPI 3.0 JSON" to ::exportOpenApi,
+                ))
+            }
+        })
+    }
+
+    private fun showMenu(button: JButton, items: List<Pair<String, () -> Unit>>) {
+        val menu = JPopupMenu()
+        items.forEach { (label, action) ->
+            menu.add(javax.swing.JMenuItem(label).apply { addActionListener { action() } })
+        }
+        menu.show(button, 0, button.height)
     }
 
     private fun buildCollectionPanel(): JPanel {
@@ -276,6 +311,154 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         val text = curl.export(currentRequest, workspace.activeVariables())
         Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
         response.showMessage("cURL copied to clipboard")
+    }
+
+    private fun importPostmanCollection() {
+        val file = chooseJsonFile("Import Postman Collection") ?: return
+        val text = readFile(file) ?: return
+        try {
+            val collection = postman.parseCollection(text)
+            val count = collection.requests.size + collection.folders.sumOf { it.requests.size }
+            if (count == 0) {
+                Messages.showInfoMessage(project, "No requests found in this file", "Import")
+                return
+            }
+            collection.name = uniqueCollectionName(collection.name)
+            workspace.data.collections.add(collection)
+            refreshTree(firstRequestOf(collection))
+            response.showMessage("Imported $count request(s) into \"${collection.name}\"")
+        } catch (error: Exception) {
+            Messages.showErrorDialog(project, error.message ?: "Invalid Postman collection JSON", "Import failed")
+        }
+    }
+
+    private fun importPostmanEnvironment() {
+        val file = chooseJsonFile("Import Postman Environment") ?: return
+        val text = readFile(file) ?: return
+        try {
+            val environment = postman.parseEnvironment(text)
+            if (environment == null) {
+                Messages.showErrorDialog(project, "No variables found in this environment file", "Import failed")
+                return
+            }
+            environment.name = uniqueEnvironmentName(environment.name)
+            workspace.data.environments.add(environment)
+            workspace.data.activeEnvironmentId = environment.id
+            refreshEnvironments()
+            response.showMessage("Imported environment \"${environment.name}\"")
+        } catch (error: Exception) {
+            Messages.showErrorDialog(project, error.message ?: "Invalid Postman environment JSON", "Import failed")
+        }
+    }
+
+    private fun importOpenApi() {
+        val file = chooseJsonFile("Import OpenAPI / Swagger JSON") ?: return
+        val text = readFile(file) ?: return
+        try {
+            val imported = openApi.parse(text)
+            val collection = imported.collection
+            val count = collection.requests.size + collection.folders.sumOf { it.requests.size }
+            if (count == 0) {
+                Messages.showInfoMessage(project, "No operations found in this file", "Import")
+                return
+            }
+            collection.name = uniqueCollectionName(collection.name)
+            workspace.data.collections.add(collection)
+            imported.environment?.let { environment ->
+                environment.name = uniqueEnvironmentName(environment.name)
+                workspace.data.environments.add(environment)
+                workspace.data.activeEnvironmentId = environment.id
+                refreshEnvironments()
+            }
+            refreshTree(firstRequestOf(collection))
+            response.showMessage("Imported $count operation(s) into \"${collection.name}\"")
+        } catch (error: Exception) {
+            Messages.showErrorDialog(project, error.message ?: "Invalid OpenAPI JSON", "Import failed")
+        }
+    }
+
+    private fun exportPostmanCollection() {
+        val collections = exportTargets() ?: return
+        val name = if (collections.size == 1) collections.first().name else "Astra Workspace"
+        val file = chooseSaveFile("Export Postman Collection", "${sanitizeFileName(name)}.postman_collection.json")
+            ?: return
+        writeFile(file, postman.exportCollection(collections, name))
+    }
+
+    private fun exportPostmanEnvironment() {
+        val environment = workspace.activeEnvironment()
+        val file = chooseSaveFile(
+            "Export Postman Environment",
+            "${sanitizeFileName(environment.name)}.postman_environment.json",
+        ) ?: return
+        writeFile(file, postman.exportEnvironment(environment))
+    }
+
+    private fun exportOpenApi() {
+        val collections = exportTargets() ?: return
+        val name = if (collections.size == 1) collections.first().name else "Astra API"
+        val file = chooseSaveFile("Export OpenAPI 3.0", "${sanitizeFileName(name)}.openapi.json") ?: return
+        writeFile(file, openApi.export(collections, name))
+    }
+
+    private fun exportTargets(): List<RequestCollection>? {
+        selectedCollection()?.let { return listOf(it) }
+        if (workspace.data.collections.isEmpty()) {
+            Messages.showInfoMessage(project, "There is nothing to export", "Export")
+            return null
+        }
+        return workspace.data.collections.toList()
+    }
+
+    private fun firstRequestOf(collection: RequestCollection): AstraRequest? =
+        collection.requests.firstOrNull() ?: collection.folders.firstOrNull()?.requests?.firstOrNull()
+
+    private fun chooseJsonFile(title: String): File? {
+        val chooser = JFileChooser()
+        chooser.dialogTitle = title
+        chooser.fileFilter = FileNameExtensionFilter("JSON files (*.json)", "json")
+        return if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) chooser.selectedFile else null
+    }
+
+    private fun chooseSaveFile(title: String, defaultName: String): File? {
+        val chooser = JFileChooser()
+        chooser.dialogTitle = title
+        chooser.selectedFile = File(defaultName)
+        chooser.fileFilter = FileNameExtensionFilter("JSON files (*.json)", "json")
+        return if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) chooser.selectedFile else null
+    }
+
+    private fun readFile(file: File): String? = try {
+        Files.readString(file.toPath())
+    } catch (error: Exception) {
+        Messages.showErrorDialog(project, error.message ?: "Unable to read file", "Import failed")
+        null
+    }
+
+    private fun writeFile(file: File, content: String) {
+        try {
+            Files.writeString(file.toPath(), content)
+            response.showMessage("Exported to ${file.name}")
+        } catch (error: Exception) {
+            Messages.showErrorDialog(project, error.message ?: "Unable to write file", "Export failed")
+        }
+    }
+
+    private fun sanitizeFileName(name: String): String =
+        name.replace(Regex("[^A-Za-z0-9._ -]"), "_").trim().ifBlank { "astra" }
+
+    private fun uniqueCollectionName(base: String): String {
+        if (workspace.data.collections.none { it.name == base }) return base
+        var index = 2
+        while (workspace.data.collections.any { it.name == "$base ($index)" }) index++
+        return "$base ($index)"
+    }
+
+    private fun uniqueEnvironmentName(base: String): String {
+        if (workspace.data.environments.none { it.name == base }) return base
+        var index = 2
+        while (workspace.data.environments.any { it.name == "$base ($index)" }) index++
+        return "$base ($index)"
     }
 
     private fun send() {
