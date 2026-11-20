@@ -67,7 +67,14 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         registerTabShortcuts()
         newRequest()
         tabs.addTab("+", plusTab)
-        tabs.setToolTipTextAt(tabs.indexOfComponent(plusTab), "New request (Ctrl+N)")
+        val plusIndex = tabs.indexOfComponent(plusTab)
+        tabs.setTabComponentAt(plusIndex, JLabel("+").apply {
+            toolTipText = "New request (Ctrl+N)"
+            foreground = com.intellij.ui.JBColor.GRAY
+            border = javax.swing.BorderFactory.createEmptyBorder(0, 6, 0, 6)
+            cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        })
+        tabs.setToolTipTextAt(plusIndex, "New request (Ctrl+N)")
         tabs.addChangeListener {
             if (tabs.selectedComponent === plusTab) newRequest()
         }
