@@ -285,7 +285,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             label.border = javax.swing.BorderFactory.createEmptyBorder(2, 2, 2, 2)
             dots.isOpaque = false
             dots.foreground = com.intellij.ui.JBColor.GRAY
-            dots.border = javax.swing.BorderFactory.createEmptyBorder(0, 8, 0, 2)
+            dots.border = javax.swing.BorderFactory.createEmptyBorder(0, 8, 0, 6)
             add(label, BorderLayout.WEST)
             add(dots, BorderLayout.EAST)
         }
