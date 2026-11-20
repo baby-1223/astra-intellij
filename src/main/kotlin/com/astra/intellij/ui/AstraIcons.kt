@@ -6,6 +6,10 @@ import javax.swing.Icon
 object AstraIcons {
     val collection: Icon = load("collection")
     val folder: Icon = load("folder")
+    val run: Icon = load("run")
+    val rename: Icon = load("rename")
+    val duplicate: Icon = load("duplicate")
+    val delete: Icon = load("delete")
     private val requestDefault: Icon = load("request")
     private val requestGet: Icon = load("request-get")
     private val requestPost: Icon = load("request-post")

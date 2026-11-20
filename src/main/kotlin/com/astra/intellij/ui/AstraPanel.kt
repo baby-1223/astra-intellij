@@ -40,7 +40,6 @@ import javax.swing.JTree
 import javax.swing.KeyStroke
 import javax.swing.filechooser.FileNameExtensionFilter
 import javax.swing.tree.DefaultMutableTreeNode
-import javax.swing.tree.DefaultTreeCellRenderer
 import javax.swing.tree.DefaultTreeModel
 
 class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
@@ -221,45 +220,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         val panel = JPanel(BorderLayout())
         tree.isRootVisible = false
         tree.showsRootHandles = true
-        tree.cellRenderer = object : DefaultTreeCellRenderer() {
-            init {
-                backgroundSelectionColor = com.intellij.ui.JBColor(0xD6E4FF, 0x2E436E)
-                backgroundNonSelectionColor = com.intellij.ui.JBColor.background()
-                textSelectionColor = com.intellij.ui.JBColor.foreground()
-                textNonSelectionColor = com.intellij.ui.JBColor.foreground()
-                borderSelectionColor = null
-            }
-
-            override fun getTreeCellRendererComponent(
-                tree: JTree,
-                value: Any?,
-                selected: Boolean,
-                expanded: Boolean,
-                leaf: Boolean,
-                row: Int,
-                hasFocus: Boolean,
-            ): Component {
-                super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, hasFocus)
-                val nodeValue = ((value as? DefaultMutableTreeNode)?.userObject as? Node)?.value
-                when (nodeValue) {
-                    is RequestCollection -> {
-                        icon = AstraIcons.collection
-                        text = "<html>${escapeHtml(nodeValue.name)}$DOTS_HTML</html>"
-                    }
-                    is RequestFolder -> {
-                        icon = AstraIcons.folder
-                        text = "<html>${escapeHtml(nodeValue.name)}$DOTS_HTML</html>"
-                    }
-                    is AstraRequest -> {
-                        icon = AstraIcons.request(nodeValue.method)
-                        val methodColor = AstraIcons.methodColor(nodeValue.method)
-                        text = "<html><span style='color:$methodColor'><b>${nodeValue.method}</b></span> " +
-                            escapeHtml(nodeValue.name) + DOTS_HTML + "</html>"
-                    }
-                }
-                return this
-            }
-        }
+        tree.cellRenderer = NodeRenderer()
         tree.addTreeSelectionListener {
             val node = tree.lastSelectedPathComponent as? DefaultMutableTreeNode
             val value = (node?.userObject as? Node)?.value
@@ -292,49 +253,147 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             }
         })
         panel.add(JBScrollPane(tree), BorderLayout.CENTER)
+        registerTreeActions()
         return panel
     }
+
+    /** Renders icon + name on the left and a right-aligned vertical dots affordance. */
+    private inner class NodeRenderer : JPanel(BorderLayout()), javax.swing.tree.TreeCellRenderer {
+        private val label = JLabel()
+        private val dots = JLabel("⋮")
+        private var extraWidth = 0
+
+        init {
+            isOpaque = true
+            label.isOpaque = false
+            label.border = javax.swing.BorderFactory.createEmptyBorder(2, 2, 2, 2)
+            dots.isOpaque = false
+            dots.foreground = com.intellij.ui.JBColor.GRAY
+            dots.border = javax.swing.BorderFactory.createEmptyBorder(0, 8, 0, 2)
+            add(label, BorderLayout.WEST)
+            add(dots, BorderLayout.EAST)
+        }
+
+        override fun getPreferredSize(): java.awt.Dimension {
+            val size = super.getPreferredSize()
+            return java.awt.Dimension(size.width + extraWidth, size.height)
+        }
+
+        override fun getTreeCellRendererComponent(
+            tree: JTree,
+            value: Any?,
+            selected: Boolean,
+            expanded: Boolean,
+            leaf: Boolean,
+            row: Int,
+            hasFocus: Boolean,
+        ): Component {
+            val nodeValue = ((value as? DefaultMutableTreeNode)?.userObject as? Node)?.value
+            when (nodeValue) {
+                is RequestCollection -> {
+                    label.icon = AstraIcons.collection
+                    label.text = escapeHtml(nodeValue.name)
+                }
+                is RequestFolder -> {
+                    label.icon = AstraIcons.folder
+                    label.text = escapeHtml(nodeValue.name)
+                }
+                is AstraRequest -> {
+                    label.icon = AstraIcons.request(nodeValue.method)
+                    val methodColor = AstraIcons.methodColor(nodeValue.method)
+                    label.text = "<html><span style='color:$methodColor'><b>${nodeValue.method}</b></span> " +
+                        escapeHtml(nodeValue.name) + "</html>"
+                }
+                else -> {
+                    label.icon = null
+                    label.text = value?.toString().orEmpty()
+                }
+            }
+            label.foreground = com.intellij.ui.JBColor.foreground()
+            background = if (selected) SELECTION_COLOR else com.intellij.ui.JBColor.background()
+            val base = super.getPreferredSize()
+            val xOffset = runCatching { tree.getRowBounds(row)?.x ?: 0 }.getOrDefault(0)
+            val viewportWidth = (tree.parent as? javax.swing.JViewport)?.width ?: tree.width
+            extraWidth = (viewportWidth - xOffset - 4 - base.width).coerceAtLeast(0)
+            return this
+        }
+    }
+
+    private fun registerTreeActions() {
+        fun bind(stroke: KeyStroke, name: String, action: () -> Unit) {
+            tree.getInputMap(JComponent.WHEN_FOCUSED).put(stroke, name)
+            tree.actionMap.put(name, object : AbstractAction() {
+                override fun actionPerformed(e: ActionEvent?) = action()
+            })
+        }
+        bind(ADD_COLLECTION_STROKE, "astra.addCollection") { addCollection() }
+        bind(ADD_REQUEST_STROKE, "astra.addRequest") {
+            selectedTarget()?.let { if (it is RequestCollection || it is RequestFolder) addRequest(it) }
+        }
+        bind(ADD_FOLDER_STROKE, "astra.addFolder") {
+            selectedTarget()?.let { if (it is RequestCollection || it is RequestFolder) addFolder(it) }
+        }
+        bind(RUN_STROKE, "astra.runSelection") {
+            when (val value = selectedNodeValue()) {
+                is RequestCollection -> runRequests(value.name, value.allRequests())
+                is RequestFolder -> runRequests(value.name, value.allRequests())
+            }
+        }
+        bind(RENAME_STROKE, "astra.renameSelection") { selectedNodeValue()?.let { renameValue(it) } }
+        bind(DUPLICATE_STROKE, "astra.duplicateSelection") { selectedNodeValue()?.let { duplicateValue(it) } }
+        bind(DELETE_STROKE, "astra.deleteSelection") { selectedNodeValue()?.let { deleteValue(it) } }
+        bind(KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0), "astra.deleteSelectionBs") {
+            selectedNodeValue()?.let { deleteValue(it) }
+        }
+    }
+
+    private fun selectedNodeValue(): Any? =
+        ((tree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.userObject as? Node)?.value
 
     private fun showCollectionPopup(x: Int, y: Int) {
         val node = tree.lastSelectedPathComponent as? DefaultMutableTreeNode
         val value = (node?.userObject as? Node)?.value
         val menu = JPopupMenu()
 
-        fun item(label: String, action: () -> Unit) {
-            menu.add(javax.swing.JMenuItem(label).apply { addActionListener { action() } })
+        fun item(label: String, icon: javax.swing.Icon? = null, accelerator: KeyStroke? = null, action: () -> Unit) {
+            menu.add(javax.swing.JMenuItem(label).apply {
+                this.icon = icon
+                this.accelerator = accelerator
+                addActionListener { action() }
+            })
         }
 
         when (value) {
             is RequestCollection -> {
-                item("Add Request") { addRequest(value) }
-                item("Add Folder") { addFolder(value) }
-                item("Add Collection") { addCollection() }
+                item("Add Request", AstraIcons.request("GET"), ADD_REQUEST_STROKE) { addRequest(value) }
+                item("Add Folder", AstraIcons.folder, ADD_FOLDER_STROKE) { addFolder(value) }
+                item("Add Collection", AstraIcons.collection, ADD_COLLECTION_STROKE) { addCollection() }
                 menu.addSeparator()
-                item("Run Collection") { runRequests(value.name, value.allRequests()) }
+                item("Run Collection", AstraIcons.run, RUN_STROKE) { runRequests(value.name, value.allRequests()) }
                 menu.addSeparator()
-                item("Rename") { renameValue(value) }
-                item("Duplicate") { duplicateValue(value) }
+                item("Rename", AstraIcons.rename, RENAME_STROKE) { renameValue(value) }
+                item("Duplicate", AstraIcons.duplicate, DUPLICATE_STROKE) { duplicateValue(value) }
                 menu.addSeparator()
-                item("Delete Collection") { deleteValue(value) }
+                item("Delete Collection", AstraIcons.delete, DELETE_STROKE) { deleteValue(value) }
             }
             is RequestFolder -> {
-                item("Add Request") { addRequest(value) }
-                item("Add Folder") { addFolder(value) }
+                item("Add Request", AstraIcons.request("GET"), ADD_REQUEST_STROKE) { addRequest(value) }
+                item("Add Folder", AstraIcons.folder, ADD_FOLDER_STROKE) { addFolder(value) }
                 menu.addSeparator()
-                item("Run Folder") { runRequests(value.name, value.allRequests()) }
+                item("Run Folder", AstraIcons.run, RUN_STROKE) { runRequests(value.name, value.allRequests()) }
                 menu.addSeparator()
-                item("Rename") { renameValue(value) }
-                item("Duplicate") { duplicateValue(value) }
+                item("Rename", AstraIcons.rename, RENAME_STROKE) { renameValue(value) }
+                item("Duplicate", AstraIcons.duplicate, DUPLICATE_STROKE) { duplicateValue(value) }
                 menu.addSeparator()
-                item("Delete Folder") { deleteValue(value) }
+                item("Delete Folder", AstraIcons.delete, DELETE_STROKE) { deleteValue(value) }
             }
             is AstraRequest -> {
-                item("Rename") { renameValue(value) }
-                item("Duplicate") { duplicateValue(value) }
+                item("Rename", AstraIcons.rename, RENAME_STROKE) { renameValue(value) }
+                item("Duplicate", AstraIcons.duplicate, DUPLICATE_STROKE) { duplicateValue(value) }
                 menu.addSeparator()
-                item("Delete Request") { deleteValue(value) }
+                item("Delete Request", AstraIcons.delete, DELETE_STROKE) { deleteValue(value) }
             }
-            else -> item("Add Collection") { addCollection() }
+            else -> item("Add Collection", AstraIcons.collection, ADD_COLLECTION_STROKE) { addCollection() }
         }
         menu.show(tree, x, y)
     }
@@ -772,6 +831,18 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     companion object {
         private const val NEW_TAB_ACTION = "astra.newTab"
         private const val CLOSE_TAB_ACTION = "astra.closeTab"
+        private val SELECTION_COLOR = com.intellij.ui.JBColor(0xD6E4FF, 0x2E436E)
+        private val ADD_REQUEST_STROKE =
+            KeyStroke.getKeyStroke(KeyEvent.VK_R, InputEvent.CTRL_DOWN_MASK or InputEvent.ALT_DOWN_MASK)
+        private val ADD_FOLDER_STROKE =
+            KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK or InputEvent.ALT_DOWN_MASK)
+        private val ADD_COLLECTION_STROKE =
+            KeyStroke.getKeyStroke(KeyEvent.VK_C, InputEvent.CTRL_DOWN_MASK or InputEvent.ALT_DOWN_MASK)
+        private val RUN_STROKE =
+            KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK or InputEvent.SHIFT_DOWN_MASK)
+        private val RENAME_STROKE = KeyStroke.getKeyStroke(KeyEvent.VK_F2, 0)
+        private val DUPLICATE_STROKE = KeyStroke.getKeyStroke(KeyEvent.VK_D, InputEvent.CTRL_DOWN_MASK)
+        private val DELETE_STROKE = KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0)
         private const val DOTS_HTML = " <span style='color:#999999'>\u22EF</span>"
     }
 }
