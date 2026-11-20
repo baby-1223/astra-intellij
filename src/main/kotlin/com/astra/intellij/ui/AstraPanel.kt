@@ -48,6 +48,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private val tree = JTree()
     private val tabs = JTabbedPane()
     private val plusTab = JPanel()
+    private var plusTabPending = false
     private val sessions = mutableListOf<RequestSessionPanel>()
     private val postman = PostmanService()
     private val openApi = OpenApiService()
@@ -68,15 +69,40 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         newRequest()
         tabs.addTab("+", plusTab)
         val plusIndex = tabs.indexOfComponent(plusTab)
+        val plusNormalBorder = javax.swing.BorderFactory.createEmptyBorder(1, 6, 1, 6)
+        val plusHoverBorder = javax.swing.BorderFactory.createCompoundBorder(
+            javax.swing.BorderFactory.createLineBorder(com.intellij.ui.JBColor(0x2F65CA, 0x8AB4F8), 1, true),
+            javax.swing.BorderFactory.createEmptyBorder(0, 5, 0, 5),
+        )
         tabs.setTabComponentAt(plusIndex, JLabel("+").apply {
             toolTipText = "New request (Ctrl+N)"
             foreground = com.intellij.ui.JBColor.GRAY
-            border = javax.swing.BorderFactory.createEmptyBorder(0, 6, 0, 6)
+            border = plusNormalBorder
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+            addMouseListener(object : java.awt.event.MouseAdapter() {
+                override fun mouseEntered(e: java.awt.event.MouseEvent?) {
+                    foreground = com.intellij.ui.JBColor(0x2F65CA, 0x8AB4F8)
+                    background = com.intellij.ui.JBColor(0xE8F0FE, 0x3C4150)
+                    isOpaque = true
+                    border = plusHoverBorder
+                }
+
+                override fun mouseExited(e: java.awt.event.MouseEvent?) {
+                    foreground = com.intellij.ui.JBColor.GRAY
+                    isOpaque = false
+                    border = plusNormalBorder
+                }
+            })
         })
         tabs.setToolTipTextAt(plusIndex, "New request (Ctrl+N)")
         tabs.addChangeListener {
-            if (tabs.selectedComponent === plusTab) newRequest()
+            if (tabs.selectedComponent === plusTab && !plusTabPending) {
+                plusTabPending = true
+                javax.swing.SwingUtilities.invokeLater {
+                    plusTabPending = false
+                    if (tabs.selectedComponent === plusTab) newRequest()
+                }
+            }
         }
     }
 
