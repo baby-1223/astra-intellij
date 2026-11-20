@@ -20,6 +20,8 @@ import javax.swing.JTextField
 
 class RequestEditorPanel : JPanel(BorderLayout()) {
     private val nameField = JTextField("New Request")
+    private val nameLabel = JLabel()
+    private val nameCards = JPanel(CardLayout())
     private val methodBox = JComboBox(arrayOf("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"))
     val urlField = JTextField()
     private val paramsTable = KeyValueTable()
@@ -78,8 +80,13 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
             anchor = GridBagConstraints.WEST
         }
         nameField.font = nameField.font.deriveFont(java.awt.Font.BOLD)
-        nameField.toolTipText = "Click the pencil to rename (Ctrl+S to save)"
-        nameField.isEditable = false
+        nameLabel.font = nameField.font
+        nameCards.add(nameLabel, "label")
+        nameCards.add(nameField, "field")
+        fun showNameLabel() {
+            nameLabel.text = nameField.text
+            (nameCards.layout as CardLayout).show(nameCards, "label")
+        }
         val editNameButton = JButton(AstraIcons.rename).apply {
             toolTipText = "Rename request"
             isBorderPainted = false
@@ -88,20 +95,18 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
             margin = Insets(2, 4, 2, 4)
             addActionListener {
-                nameField.isEditable = true
+                (nameCards.layout as CardLayout).show(nameCards, "field")
                 nameField.requestFocusInWindow()
                 nameField.selectAll()
             }
         }
-        fun lockName() {
-            nameField.isEditable = false
-        }
-        nameField.addActionListener { lockName() }
+        nameField.addActionListener { showNameLabel() }
         nameField.addFocusListener(object : java.awt.event.FocusAdapter() {
-            override fun focusLost(e: java.awt.event.FocusEvent?) = lockName()
+            override fun focusLost(e: java.awt.event.FocusEvent?) = showNameLabel()
         })
+        showNameLabel()
         top.add(JPanel(BorderLayout(2, 0)).apply {
-            add(nameField, BorderLayout.CENTER)
+            add(nameCards, BorderLayout.CENTER)
             add(editNameButton, BorderLayout.EAST)
         }, c.at(0, 1.0).apply { gridwidth = 4 })
         c.gridy = 1
@@ -152,8 +157,9 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
     }
 
     fun showRequest(request: AstraRequest) {
-        nameField.isEditable = false
         nameField.text = request.name
+        nameLabel.text = request.name
+        (nameCards.layout as CardLayout).show(nameCards, "label")
         methodBox.selectedItem = request.method
         urlField.text = request.url
         paramsTable.setValues(request.params)
