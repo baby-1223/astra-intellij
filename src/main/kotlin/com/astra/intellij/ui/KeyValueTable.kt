@@ -30,6 +30,7 @@ class KeyValueTable : JPanel(BorderLayout()) {
         }
         table.columnModel.getColumn(1).cellRenderer = leftRenderer
         table.columnModel.getColumn(2).cellRenderer = leftRenderer
+        (table.getDefaultEditor(String::class.java) as? javax.swing.DefaultCellEditor)?.clickCountToStart = 1
         val add = JButton("Add")
         val remove = JButton("Remove")
         add.addActionListener { model.addRow(arrayOf<Any>(true, "", "")) }

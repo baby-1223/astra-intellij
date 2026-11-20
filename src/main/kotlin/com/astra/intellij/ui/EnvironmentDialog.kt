@@ -8,6 +8,7 @@ import java.awt.FlowLayout
 import java.awt.event.ActionEvent
 import javax.swing.AbstractAction
 import javax.swing.Action
+import javax.swing.DefaultCellEditor
 import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.JComponent
@@ -56,6 +57,7 @@ class EnvironmentDialog(
         }
         table.columnModel.getColumn(0).cellRenderer = leftRenderer
         table.columnModel.getColumn(1).cellRenderer = leftRenderer
+        (table.getDefaultEditor(String::class.java) as? DefaultCellEditor)?.clickCountToStart = 1
         val index = environments.indexOfFirst { it.id == activeId }.coerceAtLeast(0)
         list.selectedIndex = index
         init()
@@ -72,6 +74,26 @@ class EnvironmentDialog(
                 add(nameField, BorderLayout.CENTER)
             }, BorderLayout.NORTH)
             add(JScrollPane(table), BorderLayout.CENTER)
+            add(JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {
+                add(JButton("Add Variable").apply {
+                    addActionListener {
+                        if (table.isEditing) table.cellEditor.stopCellEditing()
+                        tableModel.addRow(arrayOf("", ""))
+                        val row = tableModel.rowCount - 1
+                        table.setRowSelectionInterval(row, row)
+                        table.scrollRectToVisible(table.getCellRect(row, 0, true))
+                        table.editCellAt(row, 0)
+                        table.editorComponent?.requestFocusInWindow()
+                    }
+                })
+                add(JButton("Remove Variable").apply {
+                    addActionListener {
+                        if (table.isEditing) table.cellEditor.stopCellEditing()
+                        val row = table.selectedRow
+                        if (row >= 0) tableModel.removeRow(table.convertRowIndexToModel(row))
+                    }
+                })
+            }, BorderLayout.SOUTH)
         }
         return JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right).apply {
             dividerLocation = 180

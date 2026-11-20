@@ -23,6 +23,8 @@ import java.awt.Component
 import java.awt.FlowLayout
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.io.File
 import java.nio.file.Files
 import javax.swing.DefaultComboBoxModel
@@ -126,9 +128,6 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         val panel = JPanel(BorderLayout())
         val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 3, 3))
         buttons.add(JButton("+ Collection").apply { addActionListener { addCollection() } })
-        buttons.add(JButton("+ Folder").apply { addActionListener { addFolder() } })
-        buttons.add(JButton("+ Request").apply { addActionListener { addRequest() } })
-        buttons.add(JButton("Delete").apply { addActionListener { deleteSelected() } })
         panel.add(buttons, BorderLayout.NORTH)
         tree.isRootVisible = false
         tree.showsRootHandles = true
@@ -155,8 +154,47 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             val value = (node?.userObject as? Node)?.value
             if (value is AstraRequest) loadRequest(value)
         }
+        tree.addMouseListener(object : MouseAdapter() {
+            override fun mousePressed(e: MouseEvent) = maybeShowPopup(e)
+            override fun mouseReleased(e: MouseEvent) = maybeShowPopup(e)
+
+            private fun maybeShowPopup(e: MouseEvent) {
+                if (!e.isPopupTrigger) return
+                val path = tree.getPathForLocation(e.x, e.y)
+                if (path != null) tree.selectionPath = path else tree.clearSelection()
+                showCollectionPopup(e.x, e.y)
+            }
+        })
         panel.add(JBScrollPane(tree), BorderLayout.CENTER)
         return panel
+    }
+
+    private fun showCollectionPopup(x: Int, y: Int) {
+        val node = tree.lastSelectedPathComponent as? DefaultMutableTreeNode
+        val value = (node?.userObject as? Node)?.value
+        val menu = JPopupMenu()
+
+        fun item(label: String, action: () -> Unit) {
+            menu.add(javax.swing.JMenuItem(label).apply { addActionListener { action() } })
+        }
+
+        when (value) {
+            is RequestCollection -> {
+                item("Add Request") { addRequest(value) }
+                item("Add Folder") { addFolder(value) }
+                item("Add Collection") { addCollection() }
+                menu.addSeparator()
+                item("Delete Collection") { deleteValue(value) }
+            }
+            is RequestFolder -> {
+                item("Add Request") { addRequest(value) }
+                menu.addSeparator()
+                item("Delete Folder") { deleteValue(value) }
+            }
+            is AstraRequest -> item("Delete Request") { deleteValue(value) }
+            else -> item("Add Collection") { addCollection() }
+        }
+        menu.show(tree, x, y)
     }
 
     private fun refreshTree(select: AstraRequest? = null) {
@@ -194,29 +232,20 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         refreshTree()
     }
 
-    private fun addFolder() {
-        val collection = selectedCollection() ?: run {
-            Messages.showInfoMessage(project, "Select a collection first", "New Folder")
-            return
-        }
+    private fun addFolder(collection: RequestCollection) {
         val name = Messages.showInputDialog(project, "Folder name", "New Folder", null)?.trim()
         if (name.isNullOrEmpty()) return
         collection.folders.add(RequestFolder(name = name))
         refreshTree()
     }
 
-    private fun addRequest() {
+    private fun addRequest(target: Any) {
         saveBoundRequest(refresh = false)
-        val target = selectedTarget() ?: run {
-            if (workspace.data.collections.isEmpty()) {
-                workspace.data.collections.add(RequestCollection(name = "Default Collection"))
-            }
-            workspace.data.collections.first()
-        }
         val request = AstraRequest(name = "New Request")
         when (target) {
             is RequestCollection -> target.requests.add(request)
             is RequestFolder -> target.requests.add(request)
+            else -> return
         }
         currentRequest = request
         savedRequest = request
@@ -224,9 +253,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         refreshTree(request)
     }
 
-    private fun deleteSelected() {
-        val node = tree.lastSelectedPathComponent as? DefaultMutableTreeNode ?: return
-        val value = (node.userObject as? Node)?.value ?: return
+    private fun deleteValue(value: Any) {
         when (value) {
             is RequestCollection -> workspace.data.collections.removeAll { it.id == value.id }
             is RequestFolder -> workspace.data.collections.forEach { collection ->
@@ -236,6 +263,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 collection.requests.removeAll { it.id == value.id }
                 collection.folders.forEach { folder -> folder.requests.removeAll { it.id == value.id } }
             }
+            else -> return
         }
         val currentExists = workspace.data.collections.any { collection ->
             collection.requests.any { it === currentRequest } ||
