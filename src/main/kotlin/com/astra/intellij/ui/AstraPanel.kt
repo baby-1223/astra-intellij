@@ -19,6 +19,7 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.WrapLayout
 import java.awt.BorderLayout
+import java.awt.Component
 import java.awt.FlowLayout
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
@@ -37,6 +38,7 @@ import javax.swing.JTextArea
 import javax.swing.JTree
 import javax.swing.filechooser.FileNameExtensionFilter
 import javax.swing.tree.DefaultMutableTreeNode
+import javax.swing.tree.DefaultTreeCellRenderer
 import javax.swing.tree.DefaultTreeModel
 
 class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
@@ -130,6 +132,24 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         panel.add(buttons, BorderLayout.NORTH)
         tree.isRootVisible = false
         tree.showsRootHandles = true
+        tree.cellRenderer = object : DefaultTreeCellRenderer() {
+            override fun getTreeCellRendererComponent(
+                tree: JTree,
+                value: Any?,
+                selected: Boolean,
+                expanded: Boolean,
+                leaf: Boolean,
+                row: Int,
+                hasFocus: Boolean,
+            ): Component {
+                super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, hasFocus)
+                val nodeValue = ((value as? DefaultMutableTreeNode)?.userObject as? Node)?.value
+                if (nodeValue is RequestCollection || nodeValue is RequestFolder) {
+                    icon = if (expanded) openIcon else closedIcon
+                }
+                return this
+            }
+        }
         tree.addTreeSelectionListener {
             val node = tree.lastSelectedPathComponent as? DefaultMutableTreeNode
             val value = (node?.userObject as? Node)?.value
