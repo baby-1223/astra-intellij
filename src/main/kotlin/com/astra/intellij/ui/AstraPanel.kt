@@ -269,11 +269,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         }
         tree.addMouseListener(object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) {
-                if (handleDotsClick(e)) return
-                maybeShowPopup(e)
+                handleDotsClick(e)
             }
-
-            override fun mouseReleased(e: MouseEvent) = maybeShowPopup(e)
 
             private fun handleDotsClick(e: MouseEvent): Boolean {
                 if (!javax.swing.SwingUtilities.isLeftMouseButton(e)) return false
@@ -285,13 +282,6 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 tree.selectionPath = tree.getPathForRow(row)
                 showCollectionPopup(e.x, e.y)
                 return true
-            }
-
-            private fun maybeShowPopup(e: MouseEvent) {
-                if (!e.isPopupTrigger) return
-                val path = tree.getPathForLocation(e.x, e.y)
-                if (path != null) tree.selectionPath = path else tree.clearSelection()
-                showCollectionPopup(e.x, e.y)
             }
         })
         panel.add(JBScrollPane(tree), BorderLayout.CENTER)
@@ -352,7 +342,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 }
             }
             label.foreground = com.intellij.ui.JBColor.foreground()
-            background = if (selected) SELECTION_COLOR else com.intellij.ui.JBColor.background()
+            // Clicking a row must not show a selection highlight; only the dots open actions.
+            background = com.intellij.ui.JBColor.background()
             val base = super.getPreferredSize()
             val xOffset = runCatching { tree.getRowBounds(row)?.x ?: 0 }.getOrDefault(0)
             val viewportWidth = (tree.parent as? javax.swing.JViewport)?.width ?: tree.width
@@ -877,7 +868,6 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     companion object {
         private const val NEW_TAB_ACTION = "astra.newTab"
         private const val CLOSE_TAB_ACTION = "astra.closeTab"
-        private val SELECTION_COLOR = com.intellij.ui.JBColor(0xD6E4FF, 0x2E436E)
         private val ADD_REQUEST_STROKE =
             KeyStroke.getKeyStroke(KeyEvent.VK_R, InputEvent.CTRL_DOWN_MASK or InputEvent.ALT_DOWN_MASK)
         private val ADD_FOLDER_STROKE =
