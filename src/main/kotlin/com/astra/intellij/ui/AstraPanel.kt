@@ -307,8 +307,60 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             }
         })
         panel.add(JBScrollPane(tree), BorderLayout.CENTER)
+        tree.dragEnabled = true
+        tree.dropMode = javax.swing.DropMode.ON
+        tree.transferHandler = TreeTransferHandler()
         registerTreeActions()
         return panel
+    }
+
+    /** Drag & drop moves requests/folders between collections and folders. */
+    private inner class TreeTransferHandler : javax.swing.TransferHandler() {
+        override fun getSourceActions(c: JComponent?): Int = MOVE
+
+        override fun createTransferable(c: JComponent?): java.awt.datatransfer.Transferable? {
+            val path = tree.selectionPath ?: return null
+            val value = ((path.lastPathComponent as? DefaultMutableTreeNode)?.userObject as? Node)?.value
+            return if (value is AstraRequest || value is RequestFolder) NodeTransferable(value) else null
+        }
+
+        override fun canImport(support: TransferSupport): Boolean {
+            if (!support.isDrop) return false
+            val target = dropTarget(support) ?: return false
+            val source = draggedValue(support) ?: return false
+            return com.astra.intellij.model.TreeOperations.canDrop(source, target)
+        }
+
+        override fun importData(support: TransferSupport): Boolean {
+            if (!canImport(support)) return false
+            val target = dropTarget(support) ?: return false
+            val source = draggedValue(support) ?: return false
+            val moved = com.astra.intellij.model.TreeOperations.move(workspace.data, source, target)
+            if (moved) refreshTree()
+            return moved
+        }
+
+        private fun dropTarget(support: TransferSupport): Any? {
+            val location = support.dropLocation as? JTree.DropLocation ?: return null
+            val node = location.path?.lastPathComponent as? DefaultMutableTreeNode
+            return (node?.userObject as? Node)?.value
+        }
+
+        private fun draggedValue(support: TransferSupport): Any? =
+            runCatching { support.transferable.getTransferData(NodeTransferable.FLAVOR) }.getOrNull()
+    }
+
+    private class NodeTransferable(private val value: Any) : java.awt.datatransfer.Transferable {
+        override fun getTransferDataFlavors(): Array<java.awt.datatransfer.DataFlavor> = arrayOf(FLAVOR)
+        override fun isDataFlavorSupported(flavor: java.awt.datatransfer.DataFlavor): Boolean = flavor == FLAVOR
+        override fun getTransferData(flavor: java.awt.datatransfer.DataFlavor): Any = value
+
+        companion object {
+            val FLAVOR = java.awt.datatransfer.DataFlavor(
+                java.awt.datatransfer.DataFlavor.javaJVMLocalObjectMimeType,
+                "Astra tree node",
+            )
+        }
     }
 
     /** Renders icon + name on the left and a right-aligned vertical dots affordance. */
