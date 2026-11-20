@@ -17,3 +17,6 @@ build/
 # 本地配置与构建产物
 local.properties
 *.log
+
+# macOS
+.DS_Store
