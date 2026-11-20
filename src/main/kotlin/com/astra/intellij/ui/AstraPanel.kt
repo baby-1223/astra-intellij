@@ -1,14 +1,10 @@
 package com.astra.intellij.ui
 
 import com.astra.intellij.core.ArchiveService
-import com.astra.intellij.core.CurlService
-import com.astra.intellij.core.HttpCall
-import com.astra.intellij.core.HttpService
+import com.astra.intellij.core.HttpClients
 import com.astra.intellij.core.OpenApiService
 import com.astra.intellij.core.PostmanService
-import com.astra.intellij.core.TestService
 import com.astra.intellij.model.AstraRequest
-import com.astra.intellij.model.HistoryEntry
 import com.astra.intellij.model.RequestCollection
 import com.astra.intellij.model.RequestFolder
 import com.astra.intellij.model.allFolders
@@ -16,8 +12,6 @@ import com.astra.intellij.model.allRequests
 import com.astra.intellij.workspace.WorkspaceService
 import com.google.gson.Gson
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.ui.components.JBScrollPane
@@ -25,8 +19,6 @@ import com.intellij.util.ui.WrapLayout
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.FlowLayout
-import java.awt.Toolkit
-import java.awt.datatransfer.StringSelection
 import java.awt.event.ActionEvent
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
@@ -40,12 +32,11 @@ import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JFileChooser
-import javax.swing.JOptionPane
+import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
-import javax.swing.JScrollPane
 import javax.swing.JSplitPane
-import javax.swing.JTextArea
+import javax.swing.JTabbedPane
 import javax.swing.JTree
 import javax.swing.KeyStroke
 import javax.swing.filechooser.FileNameExtensionFilter
@@ -55,67 +46,126 @@ import javax.swing.tree.DefaultTreeModel
 
 class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
     private val workspace = WorkspaceService.get(project)
-    private val editor = RequestEditorPanel()
-    private val response = ResponsePanel()
     private val environmentBox = JComboBox<String>()
     private val tree = JTree()
-    private val http = HttpService()
-    private val curl = CurlService()
+    private val tabs = JTabbedPane()
+    private val sessions = mutableListOf<RequestSessionPanel>()
     private val postman = PostmanService()
     private val openApi = OpenApiService()
     private val archive = ArchiveService()
     private val gson = Gson()
-    private var currentRequest = AstraRequest()
-    private var savedRequest: AstraRequest? = null
-    private var activeCall: HttpCall? = null
     private var refreshingEnvironments = false
 
     init {
         add(buildToolbar(), BorderLayout.NORTH)
-        val mainSplit = JSplitPane(JSplitPane.VERTICAL_SPLIT, editor, response).apply {
-            resizeWeight = 0.48
-            dividerLocation = 430
-        }
-        val rootSplit = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, buildCollectionPanel(), mainSplit).apply {
+        val rootSplit = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, buildCollectionPanel(), tabs).apply {
             dividerLocation = 250
             resizeWeight = 0.0
         }
         add(rootSplit, BorderLayout.CENTER)
-        editor.showRequest(currentRequest)
-        editor.sendButton.addActionListener { send() }
-        editor.cancelButton.addActionListener { activeCall?.cancel() }
-        response.onHistorySelected = {
-            currentRequest = copy(it.request)
-            savedRequest = null
-            editor.showRequest(currentRequest)
-        }
         refreshEnvironments()
         refreshTree()
-        response.setHistory(workspace.data.history)
-        registerSaveShortcut()
+        registerTabShortcuts()
+        newRequest()
     }
 
-    private fun registerSaveShortcut() {
-        editor.urlField.toolTipText = "Ctrl+Enter to send · Ctrl+S to save · {{variable}} and {{\$timestamp}} supported"
-        val inputMap = editor.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
-        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK), SAVE_ACTION_KEY)
-        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.META_DOWN_MASK), SAVE_ACTION_KEY)
-        editor.actionMap.put(SAVE_ACTION_KEY, object : AbstractAction() {
-            override fun actionPerformed(e: ActionEvent?) {
-                saveCurrent()
-            }
+    private fun currentSession(): RequestSessionPanel? = tabs.selectedComponent as? RequestSessionPanel
+
+    private fun notify(message: String) = currentSession()?.showMessage(message) ?: Unit
+
+    private fun structureChanged() {
+        refreshTree()
+        refreshTabTitles()
+    }
+
+    private fun openRequest(request: AstraRequest, bound: Boolean) {
+        sessions.firstOrNull { it.request === request }?.let {
+            tabs.selectedComponent = it
+            return
+        }
+        currentSession()?.commitEditor()
+        val session = RequestSessionPanel(
+            project = project,
+            workspace = workspace,
+            onStructureChanged = ::structureChanged,
+            onSaveToCollection = ::saveToCollection,
+        )
+        session.showRequest(request, bound)
+        sessions.add(session)
+        tabs.addTab(null, session)
+        val index = tabs.indexOfComponent(session)
+        tabs.setTabComponentAt(index, createTabHeader(session))
+        tabs.selectedComponent = session
+    }
+
+    private fun createTabHeader(session: RequestSessionPanel): JPanel {
+        val panel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
+        panel.isOpaque = false
+        val label = JLabel(session.title())
+        panel.add(label)
+        panel.add(JButton("×").apply {
+            toolTipText = "Close tab (Ctrl+W)"
+            margin = java.awt.Insets(0, 2, 0, 2)
+            isBorderPainted = false
+            isContentAreaFilled = false
+            isFocusable = false
+            addActionListener { closeSession(session) }
         })
-        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK), SEND_ACTION_KEY)
-        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.META_DOWN_MASK), SEND_ACTION_KEY)
-        editor.actionMap.put(SEND_ACTION_KEY, object : AbstractAction() {
+        return panel
+    }
+
+    private fun refreshTabTitles() {
+        sessions.forEach { session ->
+            val index = tabs.indexOfComponent(session)
+            if (index >= 0) {
+                val header = tabs.getTabComponentAt(index) as? JPanel
+                (header?.getComponent(0) as? JLabel)?.text = session.title()
+            }
+        }
+    }
+
+    private fun newRequest() = openRequest(AstraRequest(name = "New Request"), bound = false)
+
+    private fun closeSession(session: RequestSessionPanel) {
+        session.disposeSession()
+        sessions.remove(session)
+        val index = tabs.indexOfComponent(session)
+        if (index >= 0) tabs.removeTabAt(index)
+        if (sessions.isEmpty()) newRequest()
+    }
+
+    private fun saveToCollection(session: RequestSessionPanel) {
+        val target = selectedTarget() ?: run {
+            if (workspace.data.collections.isEmpty()) {
+                workspace.data.collections.add(RequestCollection(name = "Default Collection"))
+            }
+            workspace.data.collections.first()
+        }
+        when (target) {
+            is RequestCollection -> target.requests.add(session.request)
+            is RequestFolder -> target.requests.add(session.request)
+        }
+        session.markBound()
+        structureChanged()
+    }
+
+    private fun registerTabShortcuts() {
+        val inputMap = getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_N, InputEvent.CTRL_DOWN_MASK), NEW_TAB_ACTION)
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_N, InputEvent.META_DOWN_MASK), NEW_TAB_ACTION)
+        actionMap.put(NEW_TAB_ACTION, object : AbstractAction() {
+            override fun actionPerformed(e: ActionEvent?) = newRequest()
+        })
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_W, InputEvent.CTRL_DOWN_MASK), CLOSE_TAB_ACTION)
+        actionMap.put(CLOSE_TAB_ACTION, object : AbstractAction() {
             override fun actionPerformed(e: ActionEvent?) {
-                if (activeCall == null) send() else activeCall?.cancel()
+                currentSession()?.let { closeSession(it) }
             }
         })
     }
 
     private fun buildToolbar(): JPanel = JPanel(WrapLayout(FlowLayout.LEFT, 6, 4)).apply {
-        add(javax.swing.JLabel("Environment"))
+        add(JLabel("Environment"))
         add(environmentBox)
         environmentBox.addActionListener {
             if (!refreshingEnvironments) {
@@ -123,7 +173,19 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 if (env != null) workspace.data.activeEnvironmentId = env.id
             }
         }
-        add(JButton("Manage").apply { addActionListener { editEnvironments() } })
+        add(JButton("Manage \u25BE").apply {
+            addActionListener {
+                showMenu(this, listOf(
+                    "Environments..." to ::editEnvironments,
+                    "Globals..." to ::editGlobals,
+                    "Settings..." to ::editSettings,
+                    "Clear Cookies" to {
+                        HttpClients.clearCookies()
+                        notify("Cookies cleared")
+                    },
+                ))
+            }
+        })
         add(JButton("Import \u25BE").apply {
             addActionListener {
                 showMenu(this, listOf(
@@ -131,7 +193,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                     "Postman Environment" to ::importPostmanEnvironment,
                     "OpenAPI / Swagger JSON" to ::importOpenApi,
                     "Astra Workspace (.json)" to ::importWorkspace,
-                    "cURL Command" to ::importCurl,
+                    "cURL Command" to { currentSession()?.importCurl() },
                 ))
             }
         })
@@ -142,7 +204,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                     "Postman Environment" to ::exportPostmanEnvironment,
                     "OpenAPI 3.0 JSON" to ::exportOpenApi,
                     "Astra Workspace (.json)" to ::exportWorkspace,
-                    "cURL to Clipboard" to ::exportCurl,
+                    "cURL to Clipboard" to { currentSession()?.exportCurl() },
                 ))
             }
         })
@@ -191,7 +253,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         tree.addTreeSelectionListener {
             val node = tree.lastSelectedPathComponent as? DefaultMutableTreeNode
             val value = (node?.userObject as? Node)?.value
-            if (value is AstraRequest) loadRequest(value)
+            if (value is AstraRequest) openRequest(value, bound = true)
         }
         tree.addMouseListener(object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) = maybeShowPopup(e)
@@ -223,6 +285,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 item("Add Folder") { addFolder(value) }
                 item("Add Collection") { addCollection() }
                 menu.addSeparator()
+                item("Run Collection") { runRequests(value.name, value.allRequests()) }
+                menu.addSeparator()
                 item("Rename") { renameValue(value) }
                 item("Duplicate") { duplicateValue(value) }
                 menu.addSeparator()
@@ -231,6 +295,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             is RequestFolder -> {
                 item("Add Request") { addRequest(value) }
                 item("Add Folder") { addFolder(value) }
+                menu.addSeparator()
+                item("Run Folder") { runRequests(value.name, value.allRequests()) }
                 menu.addSeparator()
                 item("Rename") { renameValue(value) }
                 item("Duplicate") { duplicateValue(value) }
@@ -248,6 +314,14 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         menu.show(tree, x, y)
     }
 
+    private fun runRequests(name: String, requests: List<AstraRequest>) {
+        if (requests.isEmpty()) {
+            Messages.showInfoMessage(project, "No requests to run", "Collection Runner")
+            return
+        }
+        RunnerDialog(project, workspace, name, requests).show()
+    }
+
     private fun renameValue(value: Any) {
         val currentName = when (value) {
             is RequestCollection -> value.name
@@ -255,7 +329,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             is AstraRequest -> value.name
             else -> return
         }
-        saveBoundRequest(refresh = false)
+        sessions.firstOrNull { it.request === value }?.commitEditor()
         val name = Messages.showInputDialog(project, "Name", "Rename", null, currentName, null)?.trim()
         if (name.isNullOrEmpty()) return
         when (value) {
@@ -263,8 +337,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             is RequestFolder -> value.name = name
             is AstraRequest -> value.name = name
         }
-        if (value === currentRequest && value is AstraRequest) editor.showRequest(value)
-        refreshTree()
+        sessions.firstOrNull { it.request === value }?.reloadEditor()
+        structureChanged()
     }
 
     private fun duplicateValue(value: Any) {
@@ -281,11 +355,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                     is RequestCollection -> parent.requests.add(parent.requests.indexOf(value) + 1, duplicate)
                     is RequestFolder -> parent.requests.add(parent.requests.indexOf(value) + 1, duplicate)
                 }
-                saveBoundRequest(refresh = false)
-                currentRequest = duplicate
-                savedRequest = duplicate
-                editor.showRequest(duplicate)
-                refreshTree(duplicate)
+                openRequest(duplicate, bound = true)
+                structureChanged()
             }
             is RequestFolder -> {
                 val duplicate = deepCopy(value, RequestFolder::class.java).apply {
@@ -372,16 +443,13 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     }
 
     private fun addRequest(target: Any) {
-        saveBoundRequest(refresh = false)
         val request = AstraRequest(name = "New Request")
         when (target) {
             is RequestCollection -> target.requests.add(request)
             is RequestFolder -> target.requests.add(request)
             else -> return
         }
-        currentRequest = request
-        savedRequest = request
-        editor.showRequest(request)
+        openRequest(request, bound = true)
         refreshTree(request)
     }
 
@@ -408,48 +476,13 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             }
             else -> return
         }
-        val currentExists = workspace.data.collections.any { collection ->
-            collection.allRequests().any { it === currentRequest }
-        }
-        if (savedRequest != null && !currentExists) {
-            currentRequest = AstraRequest()
-            savedRequest = null
-            editor.showRequest(currentRequest)
-        }
+        sessions.filter { session ->
+            val bound = session.savedRequest
+            bound != null && workspace.data.collections.none { collection ->
+                collection.allRequests().any { it === bound }
+            }
+        }.forEach { closeSession(it) }
         refreshTree()
-    }
-
-    private fun loadRequest(request: AstraRequest) {
-        if (request === currentRequest) return
-        saveBoundRequest(refresh = false)
-        currentRequest = request
-        savedRequest = request
-        editor.showRequest(request)
-    }
-
-    private fun saveBoundRequest(refresh: Boolean = true) {
-        val saved = savedRequest ?: return
-        editor.readInto(saved)
-        if (refresh) refreshTree()
-    }
-
-    private fun saveCurrent() {
-        editor.readInto(currentRequest)
-        if (savedRequest == null) {
-            val target = selectedTarget() ?: run {
-                if (workspace.data.collections.isEmpty()) {
-                    workspace.data.collections.add(RequestCollection(name = "Default Collection"))
-                }
-                workspace.data.collections.first()
-            }
-            when (target) {
-                is RequestCollection -> target.requests.add(currentRequest)
-                is RequestFolder -> target.requests.add(currentRequest)
-            }
-            savedRequest = currentRequest
-        }
-        refreshTree(currentRequest)
-        response.showMessage("Request saved")
     }
 
     private fun editEnvironments() {
@@ -465,6 +498,14 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         }
     }
 
+    private fun editGlobals() {
+        GlobalsDialog(project, workspace.data.globals).show()
+    }
+
+    private fun editSettings() {
+        SettingsDialog(project, workspace.data.settings).show()
+    }
+
     private fun refreshEnvironments() {
         val environments = workspace.data.environments
         val active = environments.indexOfFirst { it.id == workspace.data.activeEnvironmentId }.coerceAtLeast(0)
@@ -478,38 +519,12 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         workspace.data.activeEnvironmentId = environments[active].id
     }
 
-    private fun importCurl() {
-        val area = JTextArea(10, 70)
-        val answer = JOptionPane.showConfirmDialog(
-            this,
-            JScrollPane(area),
-            "Paste cURL command",
-            JOptionPane.OK_CANCEL_OPTION,
-            JOptionPane.PLAIN_MESSAGE,
-        )
-        if (answer != JOptionPane.OK_OPTION || area.text.isBlank()) return
-        try {
-            currentRequest = curl.parse(area.text)
-            savedRequest = null
-            editor.showRequest(currentRequest)
-        } catch (error: Exception) {
-            Messages.showErrorDialog(project, error.message ?: "Unable to parse cURL", "Import failed")
-        }
-    }
-
-    private fun exportCurl() {
-        editor.readInto(currentRequest)
-        val text = curl.export(currentRequest, workspace.activeVariables())
-        Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
-        response.showMessage("cURL copied to clipboard")
-    }
-
     private fun importPostmanCollection() {
         val file = chooseJsonFile("Import Postman Collection") ?: return
         val text = readFile(file) ?: return
         try {
             val collection = postman.parseCollection(text)
-            val count = collection.requests.size + collection.folders.sumOf { it.requests.size }
+            val count = collection.allRequests().size
             if (count == 0) {
                 Messages.showInfoMessage(project, "No requests found in this file", "Import")
                 return
@@ -517,7 +532,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             collection.name = uniqueCollectionName(collection.name)
             workspace.data.collections.add(collection)
             refreshTree(firstRequestOf(collection))
-            response.showMessage("Imported $count request(s) into \"${collection.name}\"")
+            notify("Imported $count request(s) into \"${collection.name}\"")
         } catch (error: Exception) {
             Messages.showErrorDialog(project, error.message ?: "Invalid Postman collection JSON", "Import failed")
         }
@@ -536,7 +551,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             workspace.data.environments.add(environment)
             workspace.data.activeEnvironmentId = environment.id
             refreshEnvironments()
-            response.showMessage("Imported environment \"${environment.name}\"")
+            notify("Imported environment \"${environment.name}\"")
         } catch (error: Exception) {
             Messages.showErrorDialog(project, error.message ?: "Invalid Postman environment JSON", "Import failed")
         }
@@ -548,7 +563,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         try {
             val imported = openApi.parse(text)
             val collection = imported.collection
-            val count = collection.requests.size + collection.folders.sumOf { it.requests.size }
+            val count = collection.allRequests().size
             if (count == 0) {
                 Messages.showInfoMessage(project, "No operations found in this file", "Import")
                 return
@@ -562,7 +577,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 refreshEnvironments()
             }
             refreshTree(firstRequestOf(collection))
-            response.showMessage("Imported $count operation(s) into \"${collection.name}\"")
+            notify("Imported $count operation(s) into \"${collection.name}\"")
         } catch (error: Exception) {
             Messages.showErrorDialog(project, error.message ?: "Invalid OpenAPI JSON", "Import failed")
         }
@@ -599,7 +614,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 Messages.showErrorDialog(project, it.message ?: "Invalid Astra workspace file", "Import failed")
                 return
             }
-        saveBoundRequest(refresh = false)
+        currentSession()?.commitEditor()
         data.collections.orEmpty().forEach { collection ->
             collection.id = java.util.UUID.randomUUID().toString()
             collection.name = uniqueCollectionName(collection.name)
@@ -614,7 +629,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         }
         refreshTree()
         refreshEnvironments()
-        response.showMessage(
+        notify(
             "Imported ${data.collections.orEmpty().size} collection(s), ${data.environments.orEmpty().size} environment(s)",
         )
     }
@@ -637,7 +652,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     }
 
     private fun firstRequestOf(collection: RequestCollection): AstraRequest? =
-        collection.requests.firstOrNull() ?: collection.folders.firstOrNull()?.requests?.firstOrNull()
+        collection.allRequests().firstOrNull()
 
     private fun chooseJsonFile(title: String): File? {
         val chooser = JFileChooser()
@@ -664,7 +679,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private fun writeFile(file: File, content: String) {
         try {
             Files.writeString(file.toPath(), content)
-            response.showMessage("Exported to ${file.name}")
+            notify("Exported to ${file.name}")
         } catch (error: Exception) {
             Messages.showErrorDialog(project, error.message ?: "Unable to write file", "Export failed")
         }
@@ -698,62 +713,6 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         return "$base ($index)"
     }
 
-    private fun send() {
-        if (activeCall != null) return
-        editor.readInto(currentRequest)
-        if (currentRequest.url.isBlank()) {
-            Messages.showErrorDialog(project, "Enter a request URL first", "Cannot send")
-            return
-        }
-        editor.setSending(true)
-        response.showLoading()
-        val snapshot = copy(currentRequest)
-        val call = try {
-            http.send(snapshot, workspace.activeVariables())
-        } catch (error: Exception) {
-            editor.setSending(false)
-            response.showError(error.message ?: "Invalid request URL or configuration")
-            return
-        }
-        activeCall = call
-        call.future.whenComplete { result, error ->
-            ApplicationManager.getApplication().invokeLater({
-                if (project.isDisposed) return@invokeLater
-                activeCall = null
-                editor.setSending(false)
-                val entry = if (result != null) {
-                    response.showResult(result)
-                    response.showTestResults(TestService.evaluate(snapshot.assertions, result))
-                    HistoryEntry(
-                        request = snapshot,
-                        status = result.status,
-                        statusText = result.statusText,
-                        timeMs = result.elapsedMs,
-                        bodySize = result.body.size,
-                    )
-                } else {
-                    val cause = error?.cause ?: error
-                    val message = if (cause is java.util.concurrent.CancellationException) {
-                        "Request cancelled"
-                    } else {
-                        cause?.message ?: "Unknown network error"
-                    }
-                    response.showError(message)
-                    HistoryEntry(
-                        request = snapshot,
-                        status = 0,
-                        statusText = message,
-                        timeMs = 0,
-                        bodySize = 0,
-                    )
-                }
-                workspace.data.history.add(0, entry)
-                while (workspace.data.history.size > 100) workspace.data.history.removeLast()
-                response.setHistory(workspace.data.history)
-            }, ModalityState.any())
-        }
-    }
-
     private fun selectedTarget(): Any? {
         val node = tree.lastSelectedPathComponent as? DefaultMutableTreeNode ?: return null
         val value = (node.userObject as? Node)?.value
@@ -776,12 +735,9 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         return null
     }
 
-    private fun copy(request: AstraRequest): AstraRequest =
-        gson.fromJson(gson.toJson(request), AstraRequest::class.java)
-
     override fun dispose() {
-        activeCall?.cancel()
-        activeCall = null
+        sessions.forEach { it.disposeSession() }
+        sessions.clear()
     }
 
     private data class Node(val label: String, val value: Any) {
@@ -789,7 +745,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     }
 
     companion object {
-        private const val SAVE_ACTION_KEY = "astra.saveRequest"
-        private const val SEND_ACTION_KEY = "astra.sendRequest"
+        private const val NEW_TAB_ACTION = "astra.newTab"
+        private const val CLOSE_TAB_ACTION = "astra.closeTab"
     }
 }

@@ -35,8 +35,11 @@ class WorkspaceService : PersistentStateComponent<WorkspaceService.State> {
         ensureEnvironment()
     }
 
-    fun activeVariables(): Map<String, String> =
-        data.environments.firstOrNull { it.id == data.activeEnvironmentId }?.variables ?: emptyMap()
+    fun activeVariables(): Map<String, String> {
+        val environmentVars = data.environments
+            .firstOrNull { it.id == data.activeEnvironmentId }?.variables ?: emptyMap()
+        return data.globals + environmentVars
+    }
 
     fun activeEnvironment(): AstraEnvironment =
         data.environments.firstOrNull { it.id == data.activeEnvironmentId } ?: data.environments.first()

@@ -29,6 +29,7 @@ data class AstraRequest(
     var body: String = "",
     var formFields: MutableList<KeyValue> = mutableListOf(),
     var assertions: MutableList<String> = mutableListOf(),
+    var preRequest: MutableList<String> = mutableListOf(),
     var auth: AuthConfig = AuthConfig(),
 )
 
@@ -78,11 +79,21 @@ data class HttpResult(
     var cookies: MutableList<CookieData> = mutableListOf(),
 )
 
+data class AstraSettings(
+    var proxyHost: String = "",
+    var proxyPort: Int = 0,
+    var verifySsl: Boolean = true,
+    var timeoutSeconds: Int = 90,
+    var followRedirects: Boolean = true,
+)
+
 data class WorkspaceData(
     var collections: MutableList<RequestCollection> = mutableListOf(),
     var environments: MutableList<AstraEnvironment> = mutableListOf(),
     var activeEnvironmentId: String? = null,
     var history: MutableList<HistoryEntry> = mutableListOf(),
+    var globals: MutableMap<String, String> = mutableMapOf(),
+    var settings: AstraSettings = AstraSettings(),
 )
 
 fun RequestFolder.allFolders(): List<RequestFolder> =

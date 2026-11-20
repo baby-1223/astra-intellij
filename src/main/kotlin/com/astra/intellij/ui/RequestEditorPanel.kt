@@ -29,6 +29,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
     private val formTable = KeyValueTable()
     private val bodyCards = JPanel(CardLayout())
     private val testsArea = JTextArea(6, 40)
+    private val preRequestArea = JTextArea(4, 40)
     private val authTypeBox = JComboBox(arrayOf("none", "bearer", "basic", "apikey"))
     private val tokenField = JTextField()
     private val usernameField = JTextField()
@@ -95,6 +96,14 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
             add(bodyCards, BorderLayout.CENTER)
         })
         tabs.addTab("Authorization", buildAuthPanel())
+        tabs.addTab("Pre-request", JPanel(BorderLayout(0, 4)).apply {
+            add(JLabel("<html>One instruction per line: <b>set token {{\$guid}}</b> stores a variable in the active " +
+                "environment for this run · <b>unset debug</b> removes it · <b># comment</b></html>").apply {
+                foreground = JBColor.GRAY
+                border = BorderFactory.createEmptyBorder(4, 4, 0, 4)
+            }, BorderLayout.NORTH)
+            add(JScrollPane(preRequestArea), BorderLayout.CENTER)
+        })
         tabs.addTab("Tests", JPanel(BorderLayout(0, 4)).apply {
             add(JLabel("<html>One assertion per line: <b>status 200</b> · <b>time &lt; 500</b> · " +
                 "<b>body contains ok</b> · <b>json $.code == 0</b> · <b>header Content-Type contains json</b></html>").apply {
@@ -123,6 +132,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         bodyArea.text = request.body
         formTable.setValues(request.formFields)
         testsArea.text = request.assertions.joinToString("\n")
+        preRequestArea.text = request.preRequest.joinToString("\n")
         updateBodyCard()
         authTypeBox.selectedItem = request.auth.type
         tokenField.text = request.auth.token
@@ -144,6 +154,10 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         request.body = bodyArea.text
         request.formFields = formTable.values()
         request.assertions = testsArea.text.lines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toMutableList()
+        request.preRequest = preRequestArea.text.lines()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .toMutableList()

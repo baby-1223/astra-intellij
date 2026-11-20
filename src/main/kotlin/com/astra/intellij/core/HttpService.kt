@@ -1,6 +1,7 @@
 package com.astra.intellij.core
 
 import com.astra.intellij.model.AstraRequest
+import com.astra.intellij.model.AstraSettings
 import com.astra.intellij.model.CookieData
 import com.astra.intellij.model.HttpResult
 import com.astra.intellij.model.KeyValue
@@ -25,14 +26,16 @@ class HttpCall internal constructor(
 }
 
 class HttpService(
-    private val client: HttpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(90))
-        .build(),
+    private val clientProvider: (AstraSettings) -> HttpClient = { HttpClients.client(it) },
 ) {
-    fun send(request: AstraRequest, vars: Map<String, String> = emptyMap()): HttpCall {
+    fun send(
+        request: AstraRequest,
+        vars: Map<String, String> = emptyMap(),
+        settings: AstraSettings = AstraSettings(),
+    ): HttpCall {
         val startedAt = System.nanoTime()
-        val httpRequest = createRequest(request, vars)
-        val exchange = client.sendAsync(httpRequest, HttpResponse.BodyHandlers.ofByteArray())
+        val httpRequest = createRequest(request, vars, settings)
+        val exchange = clientProvider(settings).sendAsync(httpRequest, HttpResponse.BodyHandlers.ofByteArray())
         val future = exchange.thenApply { response ->
             val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
             HttpResult(
@@ -47,11 +50,11 @@ class HttpService(
         return HttpCall(future, exchange)
     }
 
-    private fun createRequest(request: AstraRequest, vars: Map<String, String>): HttpRequest {
+    private fun createRequest(request: AstraRequest, vars: Map<String, String>, settings: AstraSettings): HttpRequest {
         val method = VariableResolver.resolve(request.method, vars).uppercase()
         val builder = HttpRequest.newBuilder()
             .uri(URI.create(buildRequestUrl(request, vars)))
-            .timeout(Duration.ofSeconds(90))
+            .timeout(Duration.ofSeconds(settings.timeoutSeconds.toLong().coerceAtLeast(1)))
 
         request.headers.filter { it.enabled && it.key.isNotBlank() }.forEach { header ->
             builder.header(
