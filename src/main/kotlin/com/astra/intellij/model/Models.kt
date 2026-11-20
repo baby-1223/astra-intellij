@@ -36,6 +36,7 @@ data class RequestFolder(
     var id: String = UUID.randomUUID().toString(),
     var name: String = "",
     var requests: MutableList<AstraRequest> = mutableListOf(),
+    var folders: MutableList<RequestFolder> = mutableListOf(),
 )
 
 data class RequestCollection(
@@ -83,3 +84,14 @@ data class WorkspaceData(
     var activeEnvironmentId: String? = null,
     var history: MutableList<HistoryEntry> = mutableListOf(),
 )
+
+fun RequestFolder.allFolders(): List<RequestFolder> =
+    listOf(this) + folders.flatMap { it.allFolders() }
+
+fun RequestFolder.allRequests(): List<AstraRequest> =
+    requests + folders.flatMap { it.allRequests() }
+
+fun RequestCollection.allFolders(): List<RequestFolder> = folders.flatMap { it.allFolders() }
+
+fun RequestCollection.allRequests(): List<AstraRequest> =
+    requests + folders.flatMap { it.allRequests() }

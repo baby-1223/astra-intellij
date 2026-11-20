@@ -82,13 +82,16 @@ class PostmanService {
     }
 
     private fun appendCollectionItems(collection: RequestCollection, items: JsonArray) {
-        collection.folders.forEach { folder ->
-            items.add(JsonObject().apply {
-                addProperty("name", folder.name)
-                add("item", JsonArray().also { array -> folder.requests.forEach { array.add(requestJson(it)) } })
-            })
-        }
+        collection.folders.forEach { items.add(folderJson(it)) }
         collection.requests.forEach { items.add(requestJson(it)) }
+    }
+
+    private fun folderJson(folder: RequestFolder): JsonObject = JsonObject().apply {
+        addProperty("name", folder.name)
+        add("item", JsonArray().also { array ->
+            folder.requests.forEach { array.add(requestJson(it)) }
+            folder.folders.forEach { array.add(folderJson(it)) }
+        })
     }
 
     private fun parseItems(items: JsonArray, collection: RequestCollection, parent: RequestFolder?) {
@@ -103,8 +106,8 @@ class PostmanService {
                     if (parent != null) parent.requests.add(parsed) else collection.requests.add(parsed)
                 }
                 children != null -> {
-                    val folder = RequestFolder(name = if (parent == null) name else "${parent.name} / $name")
-                    collection.folders.add(folder)
+                    val folder = RequestFolder(name = name)
+                    if (parent != null) parent.folders.add(folder) else collection.folders.add(folder)
                     parseItems(children, collection, folder)
                 }
             }

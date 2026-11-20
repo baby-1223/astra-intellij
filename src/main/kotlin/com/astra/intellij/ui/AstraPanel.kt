@@ -11,6 +11,8 @@ import com.astra.intellij.model.AstraRequest
 import com.astra.intellij.model.HistoryEntry
 import com.astra.intellij.model.RequestCollection
 import com.astra.intellij.model.RequestFolder
+import com.astra.intellij.model.allFolders
+import com.astra.intellij.model.allRequests
 import com.astra.intellij.workspace.WorkspaceService
 import com.google.gson.Gson
 import com.intellij.openapi.Disposable
@@ -228,6 +230,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             }
             is RequestFolder -> {
                 item("Add Request") { addRequest(value) }
+                item("Add Folder") { addFolder(value) }
                 menu.addSeparator()
                 item("Rename") { renameValue(value) }
                 item("Duplicate") { duplicateValue(value) }
@@ -268,9 +271,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         when (value) {
             is AstraRequest -> {
                 val parent = workspace.data.collections.firstOrNull { it.requests.any { r -> r === value } }
-                    ?: workspace.data.collections.firstNotNullOfOrNull { collection ->
-                        collection.folders.firstOrNull { folder -> folder.requests.any { r -> r === value } }
-                    } ?: return
+                    ?: workspace.data.collections.asSequence().flatMap { it.allFolders() }
+                        .firstOrNull { folder -> folder.requests.any { r -> r === value } } ?: return
                 val duplicate = deepCopy(value, AstraRequest::class.java).apply {
                     id = java.util.UUID.randomUUID().toString()
                     name = "${value.name} Copy"
@@ -286,13 +288,18 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 refreshTree(duplicate)
             }
             is RequestFolder -> {
-                val collection = workspace.data.collections.firstOrNull { it.folders.any { f -> f === value } } ?: return
                 val duplicate = deepCopy(value, RequestFolder::class.java).apply {
-                    id = java.util.UUID.randomUUID().toString()
+                    regenerateFolderIds(this)
                     name = "${value.name} Copy"
-                    requests.forEach { it.id = java.util.UUID.randomUUID().toString() }
                 }
-                collection.folders.add(collection.folders.indexOf(value) + 1, duplicate)
+                val parentCollection = workspace.data.collections.firstOrNull { it.folders.any { f -> f === value } }
+                if (parentCollection != null) {
+                    parentCollection.folders.add(parentCollection.folders.indexOf(value) + 1, duplicate)
+                } else {
+                    val parentFolder = workspace.data.collections.asSequence().flatMap { it.allFolders() }
+                        .firstOrNull { it.folders.any { f -> f === value } } ?: return
+                    parentFolder.folders.add(parentFolder.folders.indexOf(value) + 1, duplicate)
+                }
                 refreshTree()
             }
             is RequestCollection -> {
@@ -300,10 +307,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                     id = java.util.UUID.randomUUID().toString()
                     name = uniqueCollectionName("${value.name} Copy")
                     requests.forEach { it.id = java.util.UUID.randomUUID().toString() }
-                    folders.forEach { folder ->
-                        folder.id = java.util.UUID.randomUUID().toString()
-                        folder.requests.forEach { it.id = java.util.UUID.randomUUID().toString() }
-                    }
+                    folders.forEach { regenerateFolderIds(it) }
                 }
                 workspace.data.collections.add(workspace.data.collections.indexOf(value) + 1, duplicate)
                 refreshTree()
@@ -311,28 +315,36 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         }
     }
 
+    private fun regenerateFolderIds(folder: RequestFolder) {
+        folder.id = java.util.UUID.randomUUID().toString()
+        folder.requests.forEach { it.id = java.util.UUID.randomUUID().toString() }
+        folder.folders.forEach { regenerateFolderIds(it) }
+    }
+
     private fun <T> deepCopy(value: T, type: Class<T>): T = gson.fromJson(gson.toJson(value), type)
 
     private fun refreshTree(select: AstraRequest? = null) {
         val root = DefaultMutableTreeNode(Node("Workspace", workspace.data))
         var selectNode: DefaultMutableTreeNode? = null
+
+        fun requestNode(request: AstraRequest): DefaultMutableTreeNode {
+            val node = DefaultMutableTreeNode(Node("${request.method}  ${request.name}", request))
+            if (request === select) selectNode = node
+            return node
+        }
+
+        fun appendFolder(parentNode: DefaultMutableTreeNode, folder: RequestFolder) {
+            val folderNode = DefaultMutableTreeNode(Node(folder.name, folder))
+            parentNode.add(folderNode)
+            folder.requests.forEach { folderNode.add(requestNode(it)) }
+            folder.folders.forEach { appendFolder(folderNode, it) }
+        }
+
         workspace.data.collections.forEach { collection ->
             val collectionNode = DefaultMutableTreeNode(Node(collection.name, collection))
             root.add(collectionNode)
-            collection.folders.forEach { folder ->
-                val folderNode = DefaultMutableTreeNode(Node(folder.name, folder))
-                collectionNode.add(folderNode)
-                folder.requests.forEach { request ->
-                    val node = DefaultMutableTreeNode(Node("${request.method}  ${request.name}", request))
-                    folderNode.add(node)
-                    if (request === select) selectNode = node
-                }
-            }
-            collection.requests.forEach { request ->
-                val node = DefaultMutableTreeNode(Node("${request.method}  ${request.name}", request))
-                collectionNode.add(node)
-                if (request === select) selectNode = node
-            }
+            collection.folders.forEach { appendFolder(collectionNode, it) }
+            collection.requests.forEach { collectionNode.add(requestNode(it)) }
         }
         tree.model = DefaultTreeModel(root)
         for (row in 0 until tree.rowCount) tree.expandRow(row)
@@ -348,10 +360,14 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         refreshTree()
     }
 
-    private fun addFolder(collection: RequestCollection) {
+    private fun addFolder(target: Any) {
         val name = Messages.showInputDialog(project, "Folder name", "New Folder", null)?.trim()
         if (name.isNullOrEmpty()) return
-        collection.folders.add(RequestFolder(name = name))
+        when (target) {
+            is RequestCollection -> target.folders.add(RequestFolder(name = name))
+            is RequestFolder -> target.folders.add(RequestFolder(name = name))
+            else -> return
+        }
         refreshTree()
     }
 
@@ -370,20 +386,30 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     }
 
     private fun deleteValue(value: Any) {
+        fun removeFolder(folder: RequestFolder, id: String) {
+            folder.folders.removeAll { it.id == id }
+            folder.folders.forEach { removeFolder(it, id) }
+        }
+
+        fun removeRequest(folder: RequestFolder, id: String) {
+            folder.requests.removeAll { it.id == id }
+            folder.folders.forEach { removeRequest(it, id) }
+        }
+
         when (value) {
             is RequestCollection -> workspace.data.collections.removeAll { it.id == value.id }
             is RequestFolder -> workspace.data.collections.forEach { collection ->
                 collection.folders.removeAll { it.id == value.id }
+                collection.folders.forEach { removeFolder(it, value.id) }
             }
             is AstraRequest -> workspace.data.collections.forEach { collection ->
                 collection.requests.removeAll { it.id == value.id }
-                collection.folders.forEach { folder -> folder.requests.removeAll { it.id == value.id } }
+                collection.folders.forEach { removeRequest(it, value.id) }
             }
             else -> return
         }
         val currentExists = workspace.data.collections.any { collection ->
-            collection.requests.any { it === currentRequest } ||
-                collection.folders.any { folder -> folder.requests.any { it === currentRequest } }
+            collection.allRequests().any { it === currentRequest }
         }
         if (savedRequest != null && !currentExists) {
             currentRequest = AstraRequest()

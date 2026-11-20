@@ -6,6 +6,7 @@ import com.astra.intellij.model.AuthConfig
 import com.astra.intellij.model.KeyValue
 import com.astra.intellij.model.RequestCollection
 import com.astra.intellij.model.RequestFolder
+import com.astra.intellij.model.allFolders
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
@@ -77,7 +78,7 @@ class OpenApiService {
         }
 
         collections.forEach { collection ->
-            collection.folders.forEach { folder ->
+            collection.allFolders().forEach { folder ->
                 folder.requests.forEach { register(it, folder.name) }
             }
             collection.requests.forEach { register(it, collection.name) }
