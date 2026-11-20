@@ -47,6 +47,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private val environmentBox = JComboBox<String>()
     private val tree = JTree()
     private val tabs = JTabbedPane()
+    private val plusTab = JPanel()
     private val sessions = mutableListOf<RequestSessionPanel>()
     private val postman = PostmanService()
     private val openApi = OpenApiService()
@@ -65,6 +66,11 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         refreshTree()
         registerTabShortcuts()
         newRequest()
+        tabs.addTab("+", plusTab)
+        tabs.setToolTipTextAt(tabs.indexOfComponent(plusTab), "New request (Ctrl+N)")
+        tabs.addChangeListener {
+            if (tabs.selectedComponent === plusTab) newRequest()
+        }
     }
 
     private fun currentSession(): RequestSessionPanel? = tabs.selectedComponent as? RequestSessionPanel
@@ -90,7 +96,9 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         )
         session.showRequest(request, bound)
         sessions.add(session)
-        tabs.addTab(null, session)
+        val plusIndex = tabs.indexOfComponent(plusTab)
+        val insertAt = if (plusIndex >= 0) plusIndex else tabs.tabCount
+        tabs.insertTab(null, null, session, null, insertAt)
         val index = tabs.indexOfComponent(session)
         tabs.setTabComponentAt(index, createTabHeader(session))
         tabs.selectedComponent = session

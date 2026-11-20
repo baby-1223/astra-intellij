@@ -24,13 +24,15 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
     val urlField = JTextField()
     private val paramsTable = KeyValueTable()
     private val headersTable = KeyValueTable()
-    private val bodyModeBox = JComboBox(arrayOf("none", "json", "text", "form-data", "urlencoded"))
+    private val bodyModes = listOf("none", "json", "text", "form-data", "urlencoded")
+    private val bodyModeBox = JComboBox(arrayOf("None", "JSON", "Text", "Form Data", "URL Encoded"))
     private val bodyArea = JTextArea(10, 40)
     private val formTable = KeyValueTable()
     private val bodyCards = JPanel(CardLayout())
     private val testsArea = JTextArea(6, 40)
     private val preRequestArea = JTextArea(4, 40)
-    private val authTypeBox = JComboBox(arrayOf("none", "bearer", "basic", "apikey"))
+    private val authTypes = listOf("none", "bearer", "basic", "apikey")
+    private val authTypeBox = JComboBox(arrayOf("None", "Bearer", "Basic", "API Key"))
     private val tokenField = JTextField()
     private val usernameField = JTextField()
     private val passwordField = JPasswordField()
@@ -156,13 +158,13 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         urlField.text = request.url
         paramsTable.setValues(request.params)
         headersTable.setValues(request.headers)
-        bodyModeBox.selectedItem = request.bodyMode
+        bodyModeBox.selectedIndex = bodyModes.indexOf(request.bodyMode).coerceAtLeast(0)
         bodyArea.text = request.body
         formTable.setValues(request.formFields)
         testsArea.text = request.assertions.joinToString("\n")
         preRequestArea.text = request.preRequest.joinToString("\n")
         updateBodyCard()
-        authTypeBox.selectedItem = request.auth.type
+        authTypeBox.selectedIndex = authTypes.indexOf(request.auth.type).coerceAtLeast(0)
         tokenField.text = request.auth.token
         usernameField.text = request.auth.username
         passwordField.text = request.auth.password
@@ -178,7 +180,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         request.url = urlField.text.trim()
         request.params = paramsTable.values()
         request.headers = headersTable.values()
-        request.bodyMode = bodyModeBox.selectedItem.toString()
+        request.bodyMode = bodyModes[bodyModeBox.selectedIndex]
         request.body = bodyArea.text
         request.formFields = formTable.values()
         request.assertions = testsArea.text.lines()
@@ -189,7 +191,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .toMutableList()
-        request.auth.type = authTypeBox.selectedItem.toString()
+        request.auth.type = authTypes[authTypeBox.selectedIndex]
         request.auth.token = tokenField.text
         request.auth.username = usernameField.text
         request.auth.password = String(passwordField.password)
@@ -206,7 +208,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
     }
 
     private fun updateBodyCard() {
-        val mode = bodyModeBox.selectedItem?.toString() ?: "none"
+        val mode = bodyModes.getOrElse(bodyModeBox.selectedIndex) { "none" }
         val form = mode == "form-data" || mode == "urlencoded"
         (bodyCards.layout as CardLayout).show(bodyCards, if (form) "form" else "raw")
         bodyArea.isEnabled = mode != "none" && !form
@@ -234,7 +236,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         authCards.add(basic, "basic")
         authCards.add(api, "apikey")
         authTypeBox.addActionListener {
-            (authCards.layout as CardLayout).show(authCards, authTypeBox.selectedItem.toString())
+            (authCards.layout as CardLayout).show(authCards, authTypes[authTypeBox.selectedIndex])
         }
         return JPanel(BorderLayout(0, 8)).apply {
             add(JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 2)).apply {
