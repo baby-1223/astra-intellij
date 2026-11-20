@@ -167,7 +167,7 @@ internal fun buildRequestUrl(request: AstraRequest, vars: Map<String, String>): 
             encodeQueryComponent(VariableResolver.resolve(request.auth.apiKeyValue, vars))
     }
 
-    val resolvedUrl = VariableResolver.resolve(request.url, vars)
+    val resolvedUrl = VariableResolver.resolve(request.url, vars).trim().replace(" ", "%20")
     if (query.isEmpty()) return resolvedUrl
 
     val fragmentIndex = resolvedUrl.indexOf('#')

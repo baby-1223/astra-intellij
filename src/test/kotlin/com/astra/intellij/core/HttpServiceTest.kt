@@ -140,6 +140,26 @@ class HttpServiceTest {
         assertEquals("/", theme.path)
     }
 
+    @Test
+    fun `buildRequestUrl trims and encodes spaces`() {
+        val url = buildRequestUrl(
+            AstraRequest(url = "  https://example.com/a b?x=1  "),
+            emptyMap(),
+        )
+
+        assertEquals("https://example.com/a%20b?x=1", url)
+    }
+
+    @Test
+    fun `sends request with spaces in url`() {
+        val request = AstraRequest(url = "  $baseUrl/query?existing=a b  ")
+
+        val result = service.send(request).result()
+
+        assertEquals(200, result.status)
+        assertEquals("existing=a%20b|null", String(result.body, StandardCharsets.UTF_8))
+    }
+
     private fun HttpCall.result() = future.get(5, TimeUnit.SECONDS)
 
     private fun handle(exchange: HttpExchange) {
