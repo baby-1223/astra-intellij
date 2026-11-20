@@ -9,6 +9,7 @@ import com.astra.intellij.model.RequestCollection
 import com.astra.intellij.model.RequestFolder
 import com.astra.intellij.model.allFolders
 import com.astra.intellij.model.allRequests
+import com.astra.intellij.model.normalize
 import com.astra.intellij.workspace.WorkspaceService
 import com.google.gson.Gson
 import com.intellij.openapi.Disposable
@@ -127,9 +128,14 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     }
 
     private fun openRequest(request: AstraRequest, bound: Boolean) {
-        sessions.firstOrNull { it.request === request }?.let {
-            tabs.selectedComponent = it
-            return
+        request.normalize()
+        sessions.firstOrNull { it.request === request }?.let { existing ->
+            if (tabs.indexOfComponent(existing) >= 0) {
+                tabs.selectedComponent = existing
+                return
+            }
+            // Stale session whose tab never appeared (earlier failure); drop and recreate it.
+            sessions.remove(existing)
         }
         currentSession()?.commitEditor()
         val session = RequestSessionPanel(
@@ -138,14 +144,20 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             onStructureChanged = ::structureChanged,
             onSaveToCollection = ::saveToCollection,
         )
-        session.showRequest(request, bound)
-        sessions.add(session)
-        val plusIndex = tabs.indexOfComponent(plusTab)
-        val insertAt = if (plusIndex >= 0) plusIndex else tabs.tabCount
-        tabs.insertTab(null, null, session, null, insertAt)
-        val index = tabs.indexOfComponent(session)
-        tabs.setTabComponentAt(index, createTabHeader(session))
-        tabs.selectedComponent = session
+        try {
+            session.showRequest(request, bound)
+            sessions.add(session)
+            val plusIndex = tabs.indexOfComponent(plusTab)
+            val insertAt = if (plusIndex >= 0) plusIndex else tabs.tabCount
+            tabs.insertTab(null, null, session, null, insertAt)
+            val index = tabs.indexOfComponent(session)
+            tabs.setTabComponentAt(index, createTabHeader(session))
+            tabs.selectedComponent = session
+        } catch (t: Throwable) {
+            sessions.remove(session)
+            com.intellij.openapi.diagnostic.Logger.getInstance(AstraPanel::class.java).warn("Open request failed", t)
+            Messages.showErrorDialog(project, t.message ?: "Unknown error", "Cannot Open Request")
+        }
     }
 
     private fun createTabHeader(session: RequestSessionPanel): JPanel {
@@ -590,6 +602,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private fun <T> deepCopy(value: T, type: Class<T>): T = gson.fromJson(gson.toJson(value), type)
 
     private fun refreshTree(select: AstraRequest? = null) {
+        workspace.data.normalize()
         val root = DefaultMutableTreeNode(Node("Workspace", workspace.data))
         var selectNode: DefaultMutableTreeNode? = null
 

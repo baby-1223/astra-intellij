@@ -106,3 +106,43 @@ fun RequestCollection.allFolders(): List<RequestFolder> = folders.flatMap { it.a
 
 fun RequestCollection.allRequests(): List<AstraRequest> =
     requests + folders.flatMap { it.allRequests() }
+
+/** Legacy workspaces deserialized by Gson can miss fields; fill safe defaults before use. */
+@Suppress("SENSELESS_COMPARISON")
+fun AstraRequest.normalize(): AstraRequest {
+    if (id.isNullOrEmpty()) id = java.util.UUID.randomUUID().toString()
+    if (name == null) name = "New Request"
+    if (method == null) method = "GET"
+    if (url == null) url = ""
+    if (body == null) body = ""
+    if (bodyMode == null) bodyMode = "none"
+    if (params == null) params = mutableListOf()
+    if (headers == null) headers = mutableListOf()
+    if (formFields == null) formFields = mutableListOf()
+    if (assertions == null) assertions = mutableListOf()
+    if (preRequest == null) preRequest = mutableListOf()
+    if (auth == null) auth = AuthConfig()
+    return this
+}
+
+@Suppress("SENSELESS_COMPARISON")
+fun WorkspaceData.normalize(): WorkspaceData {
+    if (collections == null) collections = mutableListOf()
+    collections.forEach { collection ->
+        if (collection.id.isNullOrEmpty()) collection.id = java.util.UUID.randomUUID().toString()
+        if (collection.name == null) collection.name = "Collection"
+        if (collection.requests == null) collection.requests = mutableListOf()
+        if (collection.folders == null) collection.folders = mutableListOf()
+        collection.requests.forEach { it.normalize() }
+        fun normalizeFolder(folder: RequestFolder) {
+            if (folder.id.isNullOrEmpty()) folder.id = java.util.UUID.randomUUID().toString()
+            if (folder.name == null) folder.name = "Folder"
+            if (folder.requests == null) folder.requests = mutableListOf()
+            if (folder.folders == null) folder.folders = mutableListOf()
+            folder.requests.forEach { it.normalize() }
+            folder.folders.forEach { normalizeFolder(it) }
+        }
+        collection.folders.forEach { normalizeFolder(it) }
+    }
+    return this
+}
