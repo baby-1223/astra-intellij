@@ -328,7 +328,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         }
         bind(ADD_COLLECTION_STROKE, "astra.addCollection") { addCollection() }
         bind(ADD_REQUEST_STROKE, "astra.addRequest") {
-            selectedTarget()?.let { if (it is RequestCollection || it is RequestFolder) addRequest(it) }
+            val target = selectedTarget()
+            if (target is RequestCollection || target is RequestFolder) addRequest(target) else newRequest()
         }
         bind(ADD_FOLDER_STROKE, "astra.addFolder") {
             selectedTarget()?.let { if (it is RequestCollection || it is RequestFolder) addFolder(it) }
@@ -393,7 +394,10 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 menu.addSeparator()
                 item("Delete Request", AstraIcons.delete, DELETE_STROKE) { deleteValue(value) }
             }
-            else -> item("Add Collection", AstraIcons.collection, ADD_COLLECTION_STROKE) { addCollection() }
+            else -> {
+                item("Add Request", AstraIcons.request("GET"), ADD_REQUEST_STROKE) { newRequest() }
+                item("Add Collection", AstraIcons.collection, ADD_COLLECTION_STROKE) { addCollection() }
+            }
         }
         menu.show(tree, x, y)
     }

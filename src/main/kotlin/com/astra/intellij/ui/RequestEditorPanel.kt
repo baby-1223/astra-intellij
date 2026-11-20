@@ -76,8 +76,32 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
             anchor = GridBagConstraints.WEST
         }
         nameField.font = nameField.font.deriveFont(java.awt.Font.BOLD)
-        nameField.toolTipText = "Request name (Ctrl+S to save)"
-        top.add(nameField, c.at(0, 1.0).apply { gridwidth = 4 })
+        nameField.toolTipText = "Click the pencil to rename (Ctrl+S to save)"
+        nameField.isEditable = false
+        val editNameButton = JButton(AstraIcons.rename).apply {
+            toolTipText = "Rename request"
+            isBorderPainted = false
+            isContentAreaFilled = false
+            isFocusable = false
+            cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+            margin = Insets(2, 4, 2, 4)
+            addActionListener {
+                nameField.isEditable = true
+                nameField.requestFocusInWindow()
+                nameField.selectAll()
+            }
+        }
+        fun lockName() {
+            nameField.isEditable = false
+        }
+        nameField.addActionListener { lockName() }
+        nameField.addFocusListener(object : java.awt.event.FocusAdapter() {
+            override fun focusLost(e: java.awt.event.FocusEvent?) = lockName()
+        })
+        top.add(JPanel(BorderLayout(2, 0)).apply {
+            add(nameField, BorderLayout.CENTER)
+            add(editNameButton, BorderLayout.EAST)
+        }, c.at(0, 1.0).apply { gridwidth = 4 })
         c.gridy = 1
         c.gridwidth = 1
         top.add(methodBox, c.at(0, 0.0))
@@ -126,6 +150,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
     }
 
     fun showRequest(request: AstraRequest) {
+        nameField.isEditable = false
         nameField.text = request.name
         methodBox.selectedItem = request.method
         urlField.text = request.url
