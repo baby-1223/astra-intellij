@@ -20,7 +20,7 @@ data class AuthConfig(
 
 data class AstraRequest(
     var id: String = UUID.randomUUID().toString(),
-    var name: String = "新建请求",
+    var name: String = "New Request",
     var method: String = "GET",
     var url: String = "",
     var params: MutableList<KeyValue> = mutableListOf(),

@@ -21,7 +21,7 @@ class WorkspaceCodec(
         gson.fromJson(gson.toJson(data), WorkspaceData::class.java)
 
     private fun defaultData(): WorkspaceData {
-        val environment = AstraEnvironment(name = "默认环境")
+        val environment = AstraEnvironment(name = "Default Environment")
         return WorkspaceData(
             environments = mutableListOf(environment),
             activeEnvironmentId = environment.id,

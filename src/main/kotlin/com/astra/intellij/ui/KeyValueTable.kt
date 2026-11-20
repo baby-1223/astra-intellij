@@ -3,14 +3,17 @@ package com.astra.intellij.ui
 import com.astra.intellij.model.KeyValue
 import java.awt.BorderLayout
 import java.awt.Dimension
+import java.awt.FlowLayout
 import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.JScrollPane
 import javax.swing.JTable
+import javax.swing.SwingConstants
+import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.DefaultTableModel
 
 class KeyValueTable : JPanel(BorderLayout()) {
-    private val model = object : DefaultTableModel(arrayOf("启用", "键", "值"), 0) {
+    private val model = object : DefaultTableModel(arrayOf("Enabled", "Key", "Value"), 0) {
         override fun getColumnClass(columnIndex: Int): Class<*> =
             if (columnIndex == 0) java.lang.Boolean::class.java else String::class.java
     }
@@ -20,17 +23,22 @@ class KeyValueTable : JPanel(BorderLayout()) {
         table.rowHeight = 26
         table.putClientProperty("terminateEditOnFocusLost", true)
         table.setShowGrid(false)
-        table.columnModel.getColumn(0).maxWidth = 52
+        table.columnModel.getColumn(0).maxWidth = 60
         table.preferredScrollableViewportSize = Dimension(420, 150)
-        val add = JButton("添加")
-        val remove = JButton("删除")
+        val leftRenderer = DefaultTableCellRenderer().apply {
+            horizontalAlignment = SwingConstants.LEFT
+        }
+        table.columnModel.getColumn(1).cellRenderer = leftRenderer
+        table.columnModel.getColumn(2).cellRenderer = leftRenderer
+        val add = JButton("Add")
+        val remove = JButton("Remove")
         add.addActionListener { model.addRow(arrayOf<Any>(true, "", "")) }
         remove.addActionListener {
             if (table.isEditing) table.cellEditor.stopCellEditing()
             val row = table.selectedRow
             if (row >= 0) model.removeRow(table.convertRowIndexToModel(row))
         }
-        val buttons = JPanel().apply {
+        val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {
             add(add)
             add(remove)
         }

@@ -19,7 +19,7 @@ import javax.swing.JTextArea
 import javax.swing.JTextField
 
 class RequestEditorPanel : JPanel(BorderLayout()) {
-    private val nameField = JTextField("新建请求")
+    private val nameField = JTextField("New Request")
     private val methodBox = JComboBox(arrayOf("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"))
     private val urlField = JTextField()
     private val paramsTable = KeyValueTable()
@@ -35,11 +35,11 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
     private val apiKeyInBox = JComboBox(arrayOf("header", "query"))
     private val authCards = JPanel(CardLayout())
 
-    val sendButton = JButton("发送")
-    val cancelButton = JButton("取消")
+    val sendButton = JButton("Send")
+    val cancelButton = JButton("Cancel")
 
     init {
-        urlField.toolTipText = "支持 {{变量}}，例如 {{baseUrl}}/users"
+        urlField.toolTipText = "Supports {{variables}}, e.g. {{baseUrl}}/users"
         bodyArea.lineWrap = false
         bodyArea.font = JTextField().font
         cancelButton.isEnabled = false
@@ -49,6 +49,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
             gridy = 0
             insets = Insets(4, 4, 4, 4)
             fill = GridBagConstraints.HORIZONTAL
+            anchor = GridBagConstraints.WEST
         }
         top.add(nameField, c.at(0, 0.0))
         top.add(methodBox, c.at(1, 0.0))
@@ -59,16 +60,16 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         urlField.columns = 36
 
         val tabs = JTabbedPane()
-        tabs.addTab("参数", paramsTable)
-        tabs.addTab("请求头", headersTable)
-        tabs.addTab("请求体", JPanel(BorderLayout()).apply {
-            add(JPanel().apply {
-                add(JLabel("类型"))
+        tabs.addTab("Params", paramsTable)
+        tabs.addTab("Headers", headersTable)
+        tabs.addTab("Body", JPanel(BorderLayout()).apply {
+            add(JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 2)).apply {
+                add(JLabel("Type"))
                 add(bodyModeBox)
             }, BorderLayout.NORTH)
             add(JScrollPane(bodyArea), BorderLayout.CENTER)
         })
-        tabs.addTab("认证", buildAuthPanel())
+        tabs.addTab("Authorization", buildAuthPanel())
         bodyModeBox.addActionListener {
             bodyArea.isEnabled = bodyModeBox.selectedItem != "none"
         }
@@ -99,7 +100,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
     }
 
     fun readInto(request: AstraRequest): AstraRequest {
-        request.name = nameField.text.trim().ifEmpty { "未命名请求" }
+        request.name = nameField.text.trim().ifEmpty { "Untitled Request" }
         request.method = methodBox.selectedItem.toString()
         request.url = urlField.text.trim()
         request.params = paramsTable.values()
@@ -118,25 +119,25 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
 
     fun setSending(sending: Boolean) {
         sendButton.isEnabled = !sending
-        sendButton.text = if (sending) "发送中" else "发送"
+        sendButton.text = if (sending) "Sending..." else "Send"
         cancelButton.isEnabled = sending
     }
 
     private fun buildAuthPanel(): JPanel {
-        val none = JPanel()
-        none.add(JLabel("此请求不携带认证信息").apply { foreground = JBColor.GRAY })
+        val none = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 4))
+        none.add(JLabel("This request does not use any authorization.").apply { foreground = JBColor.GRAY })
         val bearer = labeledField("Bearer Token", tokenField)
         val basic = JPanel(GridBagLayout())
-        basic.add(JLabel("用户名"), grid(0, 0))
+        basic.add(JLabel("Username"), grid(0, 0))
         basic.add(usernameField, grid(1, 0, 1.0))
-        basic.add(JLabel("密码"), grid(0, 1))
+        basic.add(JLabel("Password"), grid(0, 1))
         basic.add(passwordField, grid(1, 1, 1.0))
         val api = JPanel(GridBagLayout())
-        api.add(JLabel("键名"), grid(0, 0))
+        api.add(JLabel("Key"), grid(0, 0))
         api.add(apiKeyNameField, grid(1, 0, 1.0))
-        api.add(JLabel("键值"), grid(0, 1))
+        api.add(JLabel("Value"), grid(0, 1))
         api.add(apiKeyValueField, grid(1, 1, 1.0))
-        api.add(JLabel("添加到"), grid(0, 2))
+        api.add(JLabel("Add to"), grid(0, 2))
         api.add(apiKeyInBox, grid(1, 2, 1.0))
         authCards.add(none, "none")
         authCards.add(bearer, "bearer")
@@ -146,8 +147,8 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
             (authCards.layout as CardLayout).show(authCards, authTypeBox.selectedItem.toString())
         }
         return JPanel(BorderLayout(0, 8)).apply {
-            add(JPanel().apply {
-                add(JLabel("认证类型"))
+            add(JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 2)).apply {
+                add(JLabel("Auth Type"))
                 add(authTypeBox)
             }, BorderLayout.NORTH)
             add(authCards, BorderLayout.CENTER)
@@ -156,6 +157,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
 
     private fun labeledField(label: String, field: JTextField): JPanel =
         JPanel(BorderLayout(8, 0)).apply {
+            border = BorderFactory.createEmptyBorder(4, 4, 4, 4)
             add(JLabel(label), BorderLayout.WEST)
             add(field, BorderLayout.CENTER)
         }
@@ -166,6 +168,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
             gridy = y
             weightx = weight
             fill = GridBagConstraints.HORIZONTAL
+            anchor = GridBagConstraints.WEST
             insets = Insets(4, 4, 4, 4)
         }
 }

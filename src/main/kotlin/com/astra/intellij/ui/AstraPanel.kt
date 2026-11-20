@@ -70,7 +70,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     }
 
     private fun buildToolbar(): JPanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
-        add(javax.swing.JLabel("环境"))
+        add(javax.swing.JLabel("Environment"))
         add(environmentBox)
         environmentBox.addActionListener {
             if (!refreshingEnvironments) {
@@ -78,19 +78,19 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 if (env != null) workspace.data.activeEnvironmentId = env.id
             }
         }
-        add(JButton("管理变量").apply { addActionListener { editEnvironments() } })
-        add(JButton("导入 cURL").apply { addActionListener { importCurl() } })
-        add(JButton("复制 cURL").apply { addActionListener { exportCurl() } })
-        add(JButton("保存请求").apply { addActionListener { saveCurrent() } })
+        add(JButton("Manage").apply { addActionListener { editEnvironments() } })
+        add(JButton("Import cURL").apply { addActionListener { importCurl() } })
+        add(JButton("Copy cURL").apply { addActionListener { exportCurl() } })
+        add(JButton("Save").apply { addActionListener { saveCurrent() } })
     }
 
     private fun buildCollectionPanel(): JPanel {
         val panel = JPanel(BorderLayout())
         val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 3, 3))
-        buttons.add(JButton("+集合").apply { addActionListener { addCollection() } })
-        buttons.add(JButton("+文件夹").apply { addActionListener { addFolder() } })
-        buttons.add(JButton("+请求").apply { addActionListener { addRequest() } })
-        buttons.add(JButton("删除").apply { addActionListener { deleteSelected() } })
+        buttons.add(JButton("+ Collection").apply { addActionListener { addCollection() } })
+        buttons.add(JButton("+ Folder").apply { addActionListener { addFolder() } })
+        buttons.add(JButton("+ Request").apply { addActionListener { addRequest() } })
+        buttons.add(JButton("Delete").apply { addActionListener { deleteSelected() } })
         panel.add(buttons, BorderLayout.NORTH)
         tree.isRootVisible = false
         tree.showsRootHandles = true
@@ -104,7 +104,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     }
 
     private fun refreshTree(select: AstraRequest? = null) {
-        val root = DefaultMutableTreeNode(Node("工作区", workspace.data))
+        val root = DefaultMutableTreeNode(Node("Workspace", workspace.data))
         var selectNode: DefaultMutableTreeNode? = null
         workspace.data.collections.forEach { collection ->
             val collectionNode = DefaultMutableTreeNode(Node(collection.name, collection))
@@ -132,7 +132,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     }
 
     private fun addCollection() {
-        val name = Messages.showInputDialog(project, "集合名称", "新建集合", null)?.trim()
+        val name = Messages.showInputDialog(project, "Collection name", "New Collection", null)?.trim()
         if (name.isNullOrEmpty()) return
         workspace.data.collections.add(RequestCollection(name = name))
         refreshTree()
@@ -140,10 +140,10 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
 
     private fun addFolder() {
         val collection = selectedCollection() ?: run {
-            Messages.showInfoMessage(project, "请先选择一个集合", "新建文件夹")
+            Messages.showInfoMessage(project, "Select a collection first", "New Folder")
             return
         }
-        val name = Messages.showInputDialog(project, "文件夹名称", "新建文件夹", null)?.trim()
+        val name = Messages.showInputDialog(project, "Folder name", "New Folder", null)?.trim()
         if (name.isNullOrEmpty()) return
         collection.folders.add(RequestFolder(name = name))
         refreshTree()
@@ -153,11 +153,11 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         saveBoundRequest(refresh = false)
         val target = selectedTarget() ?: run {
             if (workspace.data.collections.isEmpty()) {
-                workspace.data.collections.add(RequestCollection(name = "默认集合"))
+                workspace.data.collections.add(RequestCollection(name = "Default Collection"))
             }
             workspace.data.collections.first()
         }
-        val request = AstraRequest(name = "新建请求")
+        val request = AstraRequest(name = "New Request")
         when (target) {
             is RequestCollection -> target.requests.add(request)
             is RequestFolder -> target.requests.add(request)
@@ -212,7 +212,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         if (savedRequest == null) {
             val target = selectedTarget() ?: run {
                 if (workspace.data.collections.isEmpty()) {
-                    workspace.data.collections.add(RequestCollection(name = "默认集合"))
+                    workspace.data.collections.add(RequestCollection(name = "Default Collection"))
                 }
                 workspace.data.collections.first()
             }
@@ -223,7 +223,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             savedRequest = currentRequest
         }
         refreshTree(currentRequest)
-        response.showMessage("请求已保存")
+        response.showMessage("Request saved")
     }
 
     private fun editEnvironments() {
@@ -257,7 +257,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         val answer = JOptionPane.showConfirmDialog(
             this,
             JScrollPane(area),
-            "粘贴 cURL 命令",
+            "Paste cURL command",
             JOptionPane.OK_CANCEL_OPTION,
             JOptionPane.PLAIN_MESSAGE,
         )
@@ -267,7 +267,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             savedRequest = null
             editor.showRequest(currentRequest)
         } catch (error: Exception) {
-            Messages.showErrorDialog(project, error.message ?: "无法解析 cURL", "导入失败")
+            Messages.showErrorDialog(project, error.message ?: "Unable to parse cURL", "Import failed")
         }
     }
 
@@ -275,14 +275,14 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         editor.readInto(currentRequest)
         val text = curl.export(currentRequest, workspace.activeVariables())
         Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
-        response.showMessage("cURL 已复制")
+        response.showMessage("cURL copied to clipboard")
     }
 
     private fun send() {
         if (activeCall != null) return
         editor.readInto(currentRequest)
         if (currentRequest.url.isBlank()) {
-            Messages.showErrorDialog(project, "请先填写请求 URL", "无法发送")
+            Messages.showErrorDialog(project, "Enter a request URL first", "Cannot send")
             return
         }
         editor.setSending(true)
@@ -292,7 +292,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             http.send(snapshot, workspace.activeVariables())
         } catch (error: Exception) {
             editor.setSending(false)
-            response.showError(error.message ?: "请求地址或配置无效")
+            response.showError(error.message ?: "Invalid request URL or configuration")
             return
         }
         activeCall = call
@@ -313,9 +313,9 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 } else {
                     val cause = error?.cause ?: error
                     val message = if (cause is java.util.concurrent.CancellationException) {
-                        "请求已取消"
+                        "Request cancelled"
                     } else {
-                        cause?.message ?: "未知网络错误"
+                        cause?.message ?: "Unknown network error"
                     }
                     response.showError(message)
                     HistoryEntry(

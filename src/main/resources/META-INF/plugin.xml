@@ -4,7 +4,7 @@
     <version>0.1.0</version>
     <vendor>APost</vendor>
     <description><![CDATA[
-        本地优先的 API 调试工具：集合、环境变量、HTTP 请求、JSON 响应、cURL 导入导出与历史记录。
+        Local-first API debugging tool: collections, environments, HTTP requests, response viewer, cURL import/export and history.
     ]]></description>
     <idea-version since-build="242"/>
     <depends>com.intellij.modules.platform</depends>

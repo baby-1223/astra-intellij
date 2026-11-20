@@ -19,7 +19,7 @@ class WorkspaceCodecTest {
             val data = codec.deserialize(content)
 
             assertEquals(1, data.environments.size)
-            assertEquals("默认环境", data.environments[0].name)
+            assertEquals("Default Environment", data.environments[0].name)
             assertEquals(data.environments[0].id, data.activeEnvironmentId)
             assertTrue(data.collections.isEmpty())
             assertTrue(data.history.isEmpty())

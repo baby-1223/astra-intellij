@@ -4,8 +4,11 @@ import com.astra.intellij.model.AstraEnvironment
 import com.intellij.openapi.ui.DialogWrapper
 import java.awt.BorderLayout
 import java.awt.Dimension
+import java.awt.FlowLayout
 import javax.swing.DefaultListModel
+import javax.swing.JButton
 import javax.swing.JComponent
+import javax.swing.JLabel
 import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.JScrollPane
@@ -13,6 +16,8 @@ import javax.swing.JSplitPane
 import javax.swing.JTable
 import javax.swing.JTextField
 import javax.swing.ListSelectionModel
+import javax.swing.SwingConstants
+import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.DefaultTableModel
 
 class EnvironmentDialog(
@@ -25,12 +30,12 @@ class EnvironmentDialog(
     private val listModel = DefaultListModel<String>()
     private val list = JList(listModel)
     private val nameField = JTextField()
-    private val tableModel = object : DefaultTableModel(arrayOf("变量", "值"), 0) {}
+    private val tableModel = object : DefaultTableModel(arrayOf("Variable", "Value"), 0) {}
     private val table = JTable(tableModel)
     private var selectedId: String? = null
 
     init {
-        title = "环境变量"
+        title = "Environments"
         environments.forEach { listModel.addElement(it.name) }
         list.selectionMode = ListSelectionModel.SINGLE_SELECTION
         list.addListSelectionListener {
@@ -43,6 +48,11 @@ class EnvironmentDialog(
             }
         }
         nameField.addActionListener { renameSelected() }
+        val leftRenderer = DefaultTableCellRenderer().apply {
+            horizontalAlignment = SwingConstants.LEFT
+        }
+        table.columnModel.getColumn(0).cellRenderer = leftRenderer
+        table.columnModel.getColumn(1).cellRenderer = leftRenderer
         val index = environments.indexOfFirst { it.id == activeId }.coerceAtLeast(0)
         list.selectedIndex = index
         init()
@@ -55,7 +65,7 @@ class EnvironmentDialog(
         }
         val right = JPanel(BorderLayout(0, 8)).apply {
             add(JPanel(BorderLayout()).apply {
-                add(javax.swing.JLabel("环境名称"), BorderLayout.WEST)
+                add(JLabel("Environment Name"), BorderLayout.WEST)
                 add(nameField, BorderLayout.CENTER)
             }, BorderLayout.NORTH)
             add(JScrollPane(table), BorderLayout.CENTER)
@@ -68,11 +78,11 @@ class EnvironmentDialog(
 
     override fun createSouthPanel(): JComponent {
         val panel = super.createSouthPanel() as JPanel
-        val add = javax.swing.JButton("新建环境")
-        val delete = javax.swing.JButton("删除环境")
+        val add = JButton("New Environment")
+        val delete = JButton("Delete Environment")
         add.addActionListener {
             saveSelected()
-            val env = AstraEnvironment(name = "新环境")
+            val env = AstraEnvironment(name = "New Environment")
             environments.add(env)
             listModel.addElement(env.name)
             list.selectedIndex = listModel.size - 1
@@ -101,7 +111,7 @@ class EnvironmentDialog(
 
     private fun renameSelected() {
         val env = environments.getOrNull(list.selectedIndex) ?: return
-        val name = nameField.text.trim().ifEmpty { "未命名环境" }
+        val name = nameField.text.trim().ifEmpty { "Untitled Environment" }
         env.name = name
         listModel.set(list.selectedIndex, name)
     }

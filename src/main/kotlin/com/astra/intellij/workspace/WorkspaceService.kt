@@ -43,7 +43,7 @@ class WorkspaceService : PersistentStateComponent<WorkspaceService.State> {
 
     private fun ensureEnvironment() {
         if (data.environments.isEmpty()) {
-            data.environments.add(AstraEnvironment(UUID.randomUUID().toString(), "默认环境"))
+            data.environments.add(AstraEnvironment(UUID.randomUUID().toString(), "Default Environment"))
         }
         if (data.environments.none { it.id == data.activeEnvironmentId }) {
             data.activeEnvironmentId = data.environments.first().id
