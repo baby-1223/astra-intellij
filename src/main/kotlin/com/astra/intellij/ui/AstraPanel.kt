@@ -48,7 +48,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private val tree = JTree()
     private val tabs = JTabbedPane()
     private val plusTab = JPanel()
-    private var plusTabPending = false
+    private var lastActiveSession: RequestSessionPanel? = null
+    private var restoringTabSelection = false
     private val sessions = mutableListOf<RequestSessionPanel>()
     private val postman = PostmanService()
     private val openApi = OpenApiService()
@@ -80,6 +81,10 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             border = plusNormalBorder
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
             addMouseListener(object : java.awt.event.MouseAdapter() {
+                override fun mouseClicked(e: java.awt.event.MouseEvent?) {
+                    if (javax.swing.SwingUtilities.isLeftMouseButton(e)) newRequest()
+                }
+
                 override fun mouseEntered(e: java.awt.event.MouseEvent?) {
                     foreground = com.intellij.ui.JBColor(0x2F65CA, 0x8AB4F8)
                     background = com.intellij.ui.JBColor(0xE8F0FE, 0x3C4150)
@@ -96,12 +101,18 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         })
         tabs.setToolTipTextAt(plusIndex, "New request (Ctrl+N)")
         tabs.addChangeListener {
-            if (tabs.selectedComponent === plusTab && !plusTabPending) {
-                plusTabPending = true
-                javax.swing.SwingUtilities.invokeLater {
-                    plusTabPending = false
-                    if (tabs.selectedComponent === plusTab) newRequest()
+            if (restoringTabSelection) return@addChangeListener
+            val selected = tabs.selectedComponent
+            if (selected === plusTab) {
+                // The plus tab is an action, never a content page: bounce selection back.
+                restoringTabSelection = true
+                try {
+                    tabs.selectedComponent = lastActiveSession ?: sessions.lastOrNull()
+                } finally {
+                    restoringTabSelection = false
                 }
+            } else if (selected is RequestSessionPanel) {
+                lastActiveSession = selected
             }
         }
     }
@@ -168,6 +179,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private fun closeSession(session: RequestSessionPanel) {
         session.disposeSession()
         sessions.remove(session)
+        if (lastActiveSession === session) lastActiveSession = null
         val index = tabs.indexOfComponent(session)
         if (index >= 0) tabs.removeTabAt(index)
         if (sessions.isEmpty()) newRequest()
