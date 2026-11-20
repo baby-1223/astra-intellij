@@ -273,6 +273,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         val panel = JPanel(BorderLayout())
         tree.isRootVisible = false
         tree.showsRootHandles = true
+        // IntelliJ paints a full-width selection over custom renderers; disable it so rows stay flat.
+        tree.putClientProperty("JTree.wideSelection", false)
         tree.cellRenderer = NodeRenderer()
         tree.addTreeSelectionListener {
             val node = tree.lastSelectedPathComponent as? DefaultMutableTreeNode
@@ -286,11 +288,19 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
 
             private fun handleDotsClick(e: MouseEvent): Boolean {
                 if (!javax.swing.SwingUtilities.isLeftMouseButton(e)) return false
-                val row = tree.getRowForLocation(e.x, e.y)
+                var row = tree.getRowForLocation(e.x, e.y)
+                if (row < 0) {
+                    // The dots can sit beyond the row's hit width; fall back to the y position.
+                    val closest = tree.getClosestRowForLocation(e.x, e.y)
+                    val bounds = if (closest >= 0) tree.getRowBounds(closest) else null
+                    row = if (bounds != null && e.y >= bounds.y && e.y < bounds.y + bounds.height) closest else -1
+                }
                 if (row < 0) return false
-                val bounds = tree.getRowBounds(row)
-                // Only the vertical dots glyph itself opens the menu, not the whole row.
-                if (e.x < bounds.x + bounds.width - 18 || e.x > bounds.x + bounds.width) return false
+                // The renderer right-aligns the dots to the viewport edge; use the same formula
+                // instead of row bounds, whose width differs between IntelliJ tree UIs.
+                val viewportWidth = (tree.parent as? javax.swing.JViewport)?.width ?: tree.width
+                val rightEdge = viewportWidth - 4
+                if (e.x < rightEdge - 24 || e.x > rightEdge) return false
                 tree.selectionPath = tree.getPathForRow(row)
                 showCollectionPopup(e.x, e.y)
                 return true
