@@ -24,7 +24,6 @@ import javax.swing.JComponent
 import javax.swing.JOptionPane
 import javax.swing.JPanel
 import javax.swing.JScrollPane
-import javax.swing.JSplitPane
 import javax.swing.JTextArea
 import javax.swing.KeyStroke
 
@@ -48,9 +47,9 @@ class RequestSessionPanel(
     private var activeCall: HttpCall? = null
 
     init {
-        val split = JSplitPane(JSplitPane.VERTICAL_SPLIT, editor, response).apply {
-            resizeWeight = 0.48
-            dividerLocation = 430
+        val split = com.intellij.ui.JBSplitter(true, 0.48f).apply {
+            firstComponent = editor
+            secondComponent = response
         }
         add(split, BorderLayout.CENTER)
         editor.showRequest(request)

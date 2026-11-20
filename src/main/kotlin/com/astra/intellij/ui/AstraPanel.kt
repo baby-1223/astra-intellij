@@ -35,7 +35,6 @@ import javax.swing.JFileChooser
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
-import javax.swing.JSplitPane
 import javax.swing.JTabbedPane
 import javax.swing.JTree
 import javax.swing.KeyStroke
@@ -58,9 +57,9 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
 
     init {
         add(buildToolbar(), BorderLayout.NORTH)
-        val rootSplit = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, buildCollectionPanel(), tabs).apply {
-            dividerLocation = 250
-            resizeWeight = 0.0
+        val rootSplit = com.intellij.ui.JBSplitter(false, 0.24f).apply {
+            firstComponent = buildCollectionPanel()
+            secondComponent = tabs
         }
         add(rootSplit, BorderLayout.CENTER)
         refreshEnvironments()
