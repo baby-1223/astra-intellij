@@ -17,6 +17,7 @@ import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.util.ui.WrapLayout
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import java.awt.Toolkit
@@ -78,7 +79,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         response.setHistory(workspace.data.history)
     }
 
-    private fun buildToolbar(): JPanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
+    private fun buildToolbar(): JPanel = JPanel(WrapLayout(FlowLayout.LEFT, 6, 4)).apply {
         add(javax.swing.JLabel("Environment"))
         add(environmentBox)
         environmentBox.addActionListener {
@@ -88,8 +89,6 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             }
         }
         add(JButton("Manage").apply { addActionListener { editEnvironments() } })
-        add(JButton("Import cURL").apply { addActionListener { importCurl() } })
-        add(JButton("Copy cURL").apply { addActionListener { exportCurl() } })
         add(JButton("Save").apply { addActionListener { saveCurrent() } })
         add(JButton("Import \u25BE").apply {
             addActionListener {
@@ -97,6 +96,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                     "Postman Collection" to ::importPostmanCollection,
                     "Postman Environment" to ::importPostmanEnvironment,
                     "OpenAPI / Swagger JSON" to ::importOpenApi,
+                    "cURL Command" to ::importCurl,
                 ))
             }
         })
@@ -106,6 +106,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                     "Postman Collection" to ::exportPostmanCollection,
                     "Postman Environment" to ::exportPostmanEnvironment,
                     "OpenAPI 3.0 JSON" to ::exportOpenApi,
+                    "cURL to Clipboard" to ::exportCurl,
                 ))
             }
         })

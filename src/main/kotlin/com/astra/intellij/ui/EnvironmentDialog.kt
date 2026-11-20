@@ -5,6 +5,9 @@ import com.intellij.openapi.ui.DialogWrapper
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.event.ActionEvent
+import javax.swing.AbstractAction
+import javax.swing.Action
 import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.JComponent
@@ -76,27 +79,26 @@ class EnvironmentDialog(
         }
     }
 
-    override fun createSouthPanel(): JComponent {
-        val panel = super.createSouthPanel() as JPanel
-        val add = JButton("New Environment")
-        val delete = JButton("Delete Environment")
-        add.addActionListener {
-            saveSelected()
-            val env = AstraEnvironment(name = "New Environment")
-            environments.add(env)
-            listModel.addElement(env.name)
-            list.selectedIndex = listModel.size - 1
+    override fun createLeftSideActions(): Array<Action> {
+        val add = object : AbstractAction("New Environment") {
+            override fun actionPerformed(e: ActionEvent?) {
+                saveSelected()
+                val env = AstraEnvironment(name = "New Environment")
+                environments.add(env)
+                listModel.addElement(env.name)
+                list.selectedIndex = listModel.size - 1
+            }
         }
-        delete.addActionListener {
-            if (environments.size <= 1) return@addActionListener
-            val index = list.selectedIndex.coerceAtLeast(0)
-            environments.removeAt(index)
-            listModel.remove(index)
-            list.selectedIndex = index.coerceAtMost(listModel.size - 1)
+        val delete = object : AbstractAction("Delete Environment") {
+            override fun actionPerformed(e: ActionEvent?) {
+                if (environments.size <= 1) return
+                val index = list.selectedIndex.coerceAtLeast(0)
+                environments.removeAt(index)
+                listModel.remove(index)
+                list.selectedIndex = index.coerceAtMost(listModel.size - 1)
+            }
         }
-        panel.add(add, 0)
-        panel.add(delete, 1)
-        return panel
+        return arrayOf(add, delete)
     }
 
     override fun doOKAction() {
