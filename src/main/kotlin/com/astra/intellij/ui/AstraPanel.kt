@@ -32,14 +32,12 @@ import javax.swing.DefaultComboBoxModel
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
-import javax.swing.JFileChooser
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
 import javax.swing.JTabbedPane
 import javax.swing.JTree
 import javax.swing.KeyStroke
-import javax.swing.filechooser.FileNameExtensionFilter
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
@@ -108,7 +106,10 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 // The plus tab is an action, never a content page: bounce selection back.
                 restoringTabSelection = true
                 try {
-                    tabs.selectedComponent = lastActiveSession ?: sessions.lastOrNull()
+                    val target = lastActiveSession ?: sessions.lastOrNull()
+                    if (target != null && tabs.indexOfComponent(target) >= 0) {
+                        tabs.selectedComponent = target
+                    }
                 } finally {
                     restoringTabSelection = false
                 }
@@ -191,10 +192,10 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private fun closeSession(session: RequestSessionPanel) {
         session.disposeSession()
         sessions.remove(session)
+        if (selectedNodeValue() === session.request) tree.clearSelection()
         if (lastActiveSession === session) lastActiveSession = null
         val index = tabs.indexOfComponent(session)
         if (index >= 0) tabs.removeTabAt(index)
-        if (sessions.isEmpty()) newRequest()
     }
 
     private fun saveToCollection(session: RequestSessionPanel) {
@@ -295,7 +296,11 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         }
         tree.addMouseListener(object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) {
-                handleDotsClick(e)
+                if (handleDotsClick(e)) return
+                if (javax.swing.SwingUtilities.isLeftMouseButton(e) && tree.getRowForLocation(e.x, e.y) < 0) {
+                    tree.clearSelection()
+                    showCollectionPopup(e.x, e.y)
+                }
             }
 
             private fun handleDotsClick(e: MouseEvent): Boolean {
@@ -312,7 +317,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 // instead of row bounds, whose width differs between IntelliJ tree UIs.
                 val viewportWidth = (tree.parent as? javax.swing.JViewport)?.width ?: tree.width
                 val rightEdge = viewportWidth - 4
-                if (e.x < rightEdge - 24 || e.x > rightEdge) return false
+                if (e.x < rightEdge - 40 || e.x > rightEdge) return false
                 tree.selectionPath = tree.getPathForRow(row)
                 showCollectionPopup(e.x, e.y)
                 return true
@@ -380,6 +385,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         private val label = JLabel()
         private val dots = JLabel("⋮")
         private var extraWidth = 0
+        private var measuringRowBounds = false
 
         init {
             isOpaque = true
@@ -387,6 +393,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             label.border = javax.swing.BorderFactory.createEmptyBorder(2, 2, 2, 2)
             dots.isOpaque = false
             dots.foreground = com.intellij.ui.JBColor.GRAY
+            dots.font = dots.font.deriveFont(java.awt.Font.BOLD, dots.font.size + 1f)
             dots.border = javax.swing.BorderFactory.createEmptyBorder(0, 8, 0, 6)
             add(label, BorderLayout.WEST)
             add(dots, BorderLayout.EAST)
@@ -406,6 +413,12 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             row: Int,
             hasFocus: Boolean,
         ): Component {
+            // DefaultTreeUI asks for this renderer again while calculating row bounds.
+            // Return the base renderer for that nested measurement instead of recursing forever.
+            if (measuringRowBounds) {
+                extraWidth = 0
+                return this
+            }
             val nodeValue = ((value as? DefaultMutableTreeNode)?.userObject as? Node)?.value
             when (nodeValue) {
                 is RequestCollection -> {
@@ -431,7 +444,12 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             // Clicking a row must not show a selection highlight; only the dots open actions.
             background = com.intellij.ui.JBColor.background()
             val base = super.getPreferredSize()
-            val xOffset = runCatching { tree.getRowBounds(row)?.x ?: 0 }.getOrDefault(0)
+            measuringRowBounds = true
+            val xOffset = try {
+                runCatching { tree.getRowBounds(row)?.x ?: 0 }.getOrDefault(0)
+            } finally {
+                measuringRowBounds = false
+            }
             val viewportWidth = (tree.parent as? javax.swing.JViewport)?.width ?: tree.width
             extraWidth = (viewportWidth - xOffset - 4 - base.width).coerceAtLeast(0)
             return this
@@ -842,20 +860,11 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private fun firstRequestOf(collection: RequestCollection): AstraRequest? =
         collection.allRequests().firstOrNull()
 
-    private fun chooseJsonFile(title: String): File? {
-        val chooser = JFileChooser()
-        chooser.dialogTitle = title
-        chooser.fileFilter = FileNameExtensionFilter("JSON files (*.json)", "json")
-        return if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) chooser.selectedFile else null
-    }
+    private fun chooseJsonFile(title: String): File? =
+        AstraFileChooser.open(this, title, "JSON files", "json")
 
-    private fun chooseSaveFile(title: String, defaultName: String): File? {
-        val chooser = JFileChooser()
-        chooser.dialogTitle = title
-        chooser.selectedFile = File(defaultName)
-        chooser.fileFilter = FileNameExtensionFilter("JSON files (*.json)", "json")
-        return if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) chooser.selectedFile else null
-    }
+    private fun chooseSaveFile(title: String, defaultName: String): File? =
+        AstraFileChooser.save(this, title, defaultName, "json")
 
     private fun readFile(file: File): String? = try {
         Files.readString(file.toPath())

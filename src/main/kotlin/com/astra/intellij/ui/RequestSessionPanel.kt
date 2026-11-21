@@ -48,6 +48,9 @@ class RequestSessionPanel(
 
     init {
         val split = com.intellij.ui.JBSplitter(true, 0.48f).apply {
+            dividerWidth = 7
+            setShowDividerIcon(true)
+            divider.border = javax.swing.BorderFactory.createMatteBorder(1, 0, 1, 0, com.intellij.ui.JBColor.border())
             firstComponent = editor
             secondComponent = response
         }

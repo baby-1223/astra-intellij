@@ -100,4 +100,108 @@ class CollectionRunnerTest {
         assertNotNull(results.single().error)
         assertFalse(results.single().passed)
     }
+
+    @Test
+    fun `runs configured iterations and reports each iteration`() {
+        val requests = listOf(
+            AstraRequest(name = "one", url = "$baseUrl/1"),
+            AstraRequest(name = "two", url = "$baseUrl/2"),
+        )
+        val events = mutableListOf<Pair<Int, Int>>()
+
+        runner.run(requests, emptyMap(), null, AstraSettings(), RunnerConfig(iterations = 2)) { iteration, index, _ ->
+            events += iteration to index
+        }
+
+        assertEquals(listOf(0 to 0, 0 to 1, 1 to 0, 1 to 1), events)
+    }
+
+    @Test
+    fun `respects request delay between executions`() {
+        val requests = listOf(
+            AstraRequest(url = "$baseUrl/1"),
+            AstraRequest(url = "$baseUrl/2"),
+            AstraRequest(url = "$baseUrl/3"),
+        )
+        val timestamps = mutableListOf<Long>()
+
+        runner.run(requests, emptyMap(), null, AstraSettings(), RunnerConfig(delayMs = 60)) { _, _, _ ->
+            timestamps += System.nanoTime()
+        }
+
+        assertEquals(3, timestamps.size)
+        assertTrue(timestamps[1] - timestamps[0] >= 50_000_000)
+        assertTrue(timestamps[2] - timestamps[1] >= 50_000_000)
+    }
+
+    @Test
+    fun `stops after first failure when continue on failure is disabled`() {
+        val requests = listOf(
+            AstraRequest(url = "not a url"),
+            AstraRequest(url = "$baseUrl/should-not-run"),
+        )
+        val indexes = mutableListOf<Int>()
+
+        runner.run(requests, emptyMap(), null, AstraSettings(), RunnerConfig(continueOnFailure = false)) { _, index, _ ->
+            indexes += index
+        }
+
+        assertEquals(listOf(0), indexes)
+    }
+
+    @Test
+    fun `cancel stops future executions and keeps completed results`() {
+        val requests = List(5) { AstraRequest(url = "$baseUrl/$it") }
+        val results = mutableListOf<RunItemResult>()
+        val worker = thread(isDaemon = true) {
+            runner.run(requests, emptyMap(), null, AstraSettings(), RunnerConfig(delayMs = 100)) { _, _, result ->
+                results += result
+            }
+        }
+        Thread.sleep(50)
+        runner.cancel()
+        worker.join(2000)
+
+        assertTrue(results.isNotEmpty())
+        assertTrue(results.size < requests.size)
+    }
+
+    @Test
+    fun `data row variables resolve in request url without changing environment`() {
+        val pathServer = ServerSocket(0)
+        val pathBaseUrl = "http://127.0.0.1:${pathServer.localPort}"
+        thread(isDaemon = true) {
+            while (!pathServer.isClosed) {
+                try {
+                    pathServer.accept().use { socket ->
+                        val requestLine = socket.getInputStream().bufferedReader().readLine().orEmpty()
+                        val status = if (requestLine.contains("/alpha")) 200 else 404
+                        socket.getOutputStream().bufferedWriter().use { writer ->
+                            writer.write("HTTP/1.1 $status OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                            writer.flush()
+                        }
+                    }
+                } catch (_: SocketException) {
+                    break
+                }
+            }
+        }
+        val environment = AstraEnvironment(name = "test").apply { variables["path"] = "old" }
+        val request = AstraRequest(url = "$pathBaseUrl/{{path}}").apply {
+            assertions.add("status 200")
+        }
+        val results = mutableListOf<RunItemResult>()
+
+        runner.run(
+            listOf(request),
+            mapOf("path" to "old"),
+            environment,
+            AstraSettings(),
+            RunnerConfig(dataRows = listOf(mapOf("path" to "alpha"))),
+        ) { _, _, result -> results += result }
+
+        pathServer.close()
+        assertTrue(results.single().passed, "expected data variable to resolve, got ${results.single().error}")
+        assertEquals("old", environment.variables["path"])
+    }
 }
