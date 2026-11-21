@@ -46,6 +46,9 @@ class RequestSessionPanel(
         private set
     private var activeCall: HttpCall? = null
 
+    /** Fired when the request name or method changes, so the owning tab can update its title. */
+    var onTitleChanged: (() -> Unit)? = null
+
     init {
         val split = com.intellij.ui.JBSplitter(true, 0.48f).apply {
             dividerWidth = 7
@@ -65,10 +68,11 @@ class RequestSessionPanel(
             onStructureChanged()
         }
         response.setHistory(workspace.data.history)
+        editor.onTitleChanged = { onTitleChanged?.invoke() }
         registerShortcuts()
     }
 
-    fun title(): String = "${request.method}  ${request.name.ifBlank { "Untitled" }}"
+    fun title(): String = "${editor.currentMethod()}  ${editor.currentName()}"
 
     fun showRequest(value: AstraRequest, bound: Boolean) {
         request = value

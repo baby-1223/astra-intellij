@@ -39,6 +39,15 @@ jobs:
           path: build/distributions/*.zip
           if-no-files-found: error
 
+      - name: Sign and publish to JetBrains Marketplace
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+        run: ./gradlew signPlugin publishPlugin
+
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2

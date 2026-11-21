@@ -1,7 +1,7 @@
 package com.astra.intellij.ui
 
 import com.astra.intellij.model.AstraRequest
-import com.intellij.ui.JBColor
+import com.intellij.util.ui.UIUtil
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.GridBagConstraints
@@ -19,6 +19,8 @@ import javax.swing.JTextArea
 import javax.swing.JTextField
 
 class RequestEditorPanel : JPanel(BorderLayout()) {
+    /** Fired when the displayed request name or method changes, so the tab title can follow. */
+    var onTitleChanged: (() -> Unit)? = null
     private val nameField = JTextField("New Request")
     private val nameLabel = JLabel()
     private val nameCards = JPanel(CardLayout())
@@ -52,10 +54,9 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         bodyArea.font = JTextField().font
         cancelButton.isEnabled = false
         sendButton.toolTipText = "Send request (Ctrl+Enter)"
-        sendButton.background = JBColor(java.awt.Color(0x2F6FED), java.awt.Color(0x3B82F6))
-        sendButton.foreground = java.awt.Color.WHITE
-        sendButton.isOpaque = true
-        sendButton.isBorderPainted = false
+        // Let the active IDE theme/LAF choose both colors. On Windows the default button
+        // may be light with a dark label, so forcing a white foreground hides the text.
+        sendButton.putClientProperty("JButton.buttonType", "default")
         cancelButton.toolTipText = "Cancel the running request"
         methodBox.renderer = object : javax.swing.DefaultListCellRenderer() {
             override fun getListCellRendererComponent(
@@ -100,6 +101,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         nameField.addFocusListener(object : java.awt.event.FocusAdapter() {
             override fun focusLost(e: java.awt.event.FocusEvent?) = finishNameEditing()
         })
+        methodBox.addActionListener { onTitleChanged?.invoke() }
         finishNameEditing()
         top.add(JPanel(BorderLayout(2, 0)).apply {
             add(nameCards, BorderLayout.CENTER)
@@ -129,7 +131,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         tabs.addTab("Pre-request", JPanel(BorderLayout(0, 4)).apply {
             add(JLabel("<html>One instruction per line: <b>set token {{\$guid}}</b> stores a variable in the active " +
                 "environment for this run · <b>unset debug</b> removes it · <b># comment</b></html>").apply {
-                foreground = JBColor.GRAY
+                foreground = UIUtil.getContextHelpForeground()
                 border = BorderFactory.createEmptyBorder(4, 4, 0, 4)
             }, BorderLayout.NORTH)
             add(JScrollPane(preRequestArea), BorderLayout.CENTER)
@@ -137,7 +139,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         tabs.addTab("Tests", JPanel(BorderLayout(0, 4)).apply {
             add(JLabel("<html>One assertion per line: <b>status 200</b> · <b>time &lt; 500</b> · " +
                 "<b>body contains ok</b> · <b>json $.code == 0</b> · <b>header Content-Type contains json</b></html>").apply {
-                foreground = JBColor.GRAY
+                foreground = UIUtil.getContextHelpForeground()
                 border = BorderFactory.createEmptyBorder(4, 4, 0, 4)
             }, BorderLayout.NORTH)
             add(JScrollPane(testsArea), BorderLayout.CENTER)
@@ -156,7 +158,12 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
     fun finishNameEditing() {
         nameLabel.text = nameField.text
         (nameCards.layout as CardLayout).show(nameCards, "label")
+        onTitleChanged?.invoke()
     }
+
+    fun currentName(): String = nameField.text.trim().ifEmpty { "Untitled Request" }
+
+    fun currentMethod(): String = methodBox.selectedItem?.toString() ?: "GET"
 
     fun showRequest(request: AstraRequest) {
         nameField.text = request.name
@@ -226,7 +233,9 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
     private fun buildAuthPanel(): JPanel {
         val none = JPanel(BorderLayout()).apply {
             add(JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 4)).apply {
-                add(JLabel("This request does not use any authorization.").apply { foreground = JBColor.GRAY })
+                add(JLabel("This request does not use any authorization.").apply {
+                    foreground = UIUtil.getContextHelpForeground()
+                })
             }, BorderLayout.NORTH)
         }
         val bearer = JPanel(BorderLayout()).apply {

@@ -12,7 +12,9 @@ import com.astra.intellij.model.allRequests
 import com.astra.intellij.model.normalize
 import com.astra.intellij.workspace.WorkspaceService
 import com.google.gson.Gson
+import com.intellij.ide.ui.LafManagerListener
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.ui.components.JBScrollPane
@@ -35,9 +37,9 @@ import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
-import javax.swing.JTabbedPane
 import javax.swing.JTree
 import javax.swing.KeyStroke
+import javax.swing.SwingUtilities
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
@@ -45,10 +47,11 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private val workspace = WorkspaceService.get(project)
     private val environmentBox = JComboBox<String>()
     private val tree = JTree()
-    private val tabs = JTabbedPane()
-    private val plusTab = JPanel()
-    private var lastActiveSession: RequestSessionPanel? = null
-    private var restoringTabSelection = false
+    private val tabStrip = RequestTabStrip(
+        onSelectionChanged = { /* selection is tracked by the strip itself */ },
+        onCloseRequested = { closeSession(it) },
+        onNewRequest = { newRequest() },
+    )
     private val sessions = mutableListOf<RequestSessionPanel>()
     private val postman = PostmanService()
     private val openApi = OpenApiService()
@@ -60,66 +63,30 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         add(buildToolbar(), BorderLayout.NORTH)
         val rootSplit = com.intellij.ui.JBSplitter(false, 0.24f).apply {
             firstComponent = buildCollectionPanel()
-            secondComponent = tabs
+            secondComponent = tabStrip
         }
         add(rootSplit, BorderLayout.CENTER)
         refreshEnvironments()
         refreshTree()
         registerTabShortcuts()
         newRequest()
-        tabs.addTab("+", plusTab)
-        val plusIndex = tabs.indexOfComponent(plusTab)
-        val plusNormalBorder = javax.swing.BorderFactory.createEmptyBorder(1, 6, 1, 6)
-        val plusHoverBorder = javax.swing.BorderFactory.createCompoundBorder(
-            javax.swing.BorderFactory.createLineBorder(com.intellij.ui.JBColor(0x2F65CA, 0x8AB4F8), 1, true),
-            javax.swing.BorderFactory.createEmptyBorder(0, 5, 0, 5),
-        )
-        tabs.setTabComponentAt(plusIndex, JLabel("+").apply {
-            toolTipText = "New request (Ctrl+N)"
-            foreground = com.intellij.ui.JBColor.GRAY
-            border = plusNormalBorder
-            cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-            addMouseListener(object : java.awt.event.MouseAdapter() {
-                override fun mouseClicked(e: java.awt.event.MouseEvent?) {
-                    if (javax.swing.SwingUtilities.isLeftMouseButton(e)) newRequest()
-                }
-
-                override fun mouseEntered(e: java.awt.event.MouseEvent?) {
-                    foreground = com.intellij.ui.JBColor(0x2F65CA, 0x8AB4F8)
-                    background = com.intellij.ui.JBColor(0xE8F0FE, 0x3C4150)
-                    isOpaque = true
-                    border = plusHoverBorder
-                }
-
-                override fun mouseExited(e: java.awt.event.MouseEvent?) {
-                    foreground = com.intellij.ui.JBColor.GRAY
-                    isOpaque = false
-                    border = plusNormalBorder
-                }
-            })
-        })
-        tabs.setToolTipTextAt(plusIndex, "New request (Ctrl+N)")
-        tabs.addChangeListener {
-            if (restoringTabSelection) return@addChangeListener
-            val selected = tabs.selectedComponent
-            if (selected === plusTab) {
-                // The plus tab is an action, never a content page: bounce selection back.
-                restoringTabSelection = true
-                try {
-                    val target = lastActiveSession ?: sessions.lastOrNull()
-                    if (target != null && tabs.indexOfComponent(target) >= 0) {
-                        tabs.selectedComponent = target
-                    }
-                } finally {
-                    restoringTabSelection = false
-                }
-            } else if (selected is RequestSessionPanel) {
-                lastActiveSession = selected
-            }
-        }
+        installThemeListener()
     }
 
-    private fun currentSession(): RequestSessionPanel? = tabs.selectedComponent as? RequestSessionPanel
+    /** Re-applies IDE theme colors when the user switches the appearance (light/dark). */
+    private fun installThemeListener() {
+        ApplicationManager.getApplication().messageBus
+            .connect(project)
+            .subscribe(LafManagerListener.TOPIC, LafManagerListener {
+                SwingUtilities.updateComponentTreeUI(this)
+                tabStrip.refreshTheme()
+                refreshTree()
+                revalidate()
+                repaint()
+            })
+    }
+
+    private fun currentSession(): RequestSessionPanel? = tabStrip.selectedSession
 
     private fun notify(message: String) = currentSession()?.showMessage(message) ?: Unit
 
@@ -131,12 +98,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private fun openRequest(request: AstraRequest, bound: Boolean) {
         request.normalize()
         sessions.firstOrNull { it.request === request }?.let { existing ->
-            if (tabs.indexOfComponent(existing) >= 0) {
-                tabs.selectedComponent = existing
-                return
-            }
-            // Stale session whose tab never appeared (earlier failure); drop and recreate it.
-            sessions.remove(existing)
+            tabStrip.selectSession(existing)
+            return
         }
         currentSession()?.commitEditor()
         val session = RequestSessionPanel(
@@ -147,13 +110,9 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         )
         try {
             session.showRequest(request, bound)
+            session.onTitleChanged = { tabStrip.updateTitle(session) }
             sessions.add(session)
-            val plusIndex = tabs.indexOfComponent(plusTab)
-            val insertAt = if (plusIndex >= 0) plusIndex else tabs.tabCount
-            tabs.insertTab(null, null, session, null, insertAt)
-            val index = tabs.indexOfComponent(session)
-            tabs.setTabComponentAt(index, createTabHeader(session))
-            tabs.selectedComponent = session
+            tabStrip.addSession(session)
         } catch (t: Throwable) {
             sessions.remove(session)
             com.intellij.openapi.diagnostic.Logger.getInstance(AstraPanel::class.java).warn("Open request failed", t)
@@ -161,30 +120,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         }
     }
 
-    private fun createTabHeader(session: RequestSessionPanel): JPanel {
-        val panel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
-        panel.isOpaque = false
-        val label = JLabel(session.title())
-        panel.add(label)
-        panel.add(JButton("×").apply {
-            toolTipText = "Close tab (Ctrl+W)"
-            margin = java.awt.Insets(0, 2, 0, 2)
-            isBorderPainted = false
-            isContentAreaFilled = false
-            isFocusable = false
-            addActionListener { closeSession(session) }
-        })
-        return panel
-    }
-
     private fun refreshTabTitles() {
-        sessions.forEach { session ->
-            val index = tabs.indexOfComponent(session)
-            if (index >= 0) {
-                val header = tabs.getTabComponentAt(index) as? JPanel
-                (header?.getComponent(0) as? JLabel)?.text = session.title()
-            }
-        }
+        sessions.forEach { session -> tabStrip.updateTitle(session) }
     }
 
     private fun newRequest() = openRequest(AstraRequest(name = "New Request"), bound = false)
@@ -193,9 +130,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         session.disposeSession()
         sessions.remove(session)
         if (selectedNodeValue() === session.request) tree.clearSelection()
-        if (lastActiveSession === session) lastActiveSession = null
-        val index = tabs.indexOfComponent(session)
-        if (index >= 0) tabs.removeTabAt(index)
+        tabStrip.removeSession(session)
     }
 
     private fun saveToCollection(session: RequestSessionPanel) {
@@ -225,6 +160,14 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             override fun actionPerformed(e: ActionEvent?) {
                 currentSession()?.let { closeSession(it) }
             }
+        })
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, InputEvent.ALT_DOWN_MASK), PREV_TAB_ACTION)
+        actionMap.put(PREV_TAB_ACTION, object : AbstractAction() {
+            override fun actionPerformed(e: ActionEvent?) = tabStrip.selectPrevious()
+        })
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, InputEvent.ALT_DOWN_MASK), NEXT_TAB_ACTION)
+        actionMap.put(NEXT_TAB_ACTION, object : AbstractAction() {
+            override fun actionPerformed(e: ActionEvent?) = tabStrip.selectNext()
         })
     }
 
@@ -295,32 +238,23 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             if (value is AstraRequest) openRequest(value, bound = true)
         }
         tree.addMouseListener(object : MouseAdapter() {
-            override fun mousePressed(e: MouseEvent) {
-                if (handleDotsClick(e)) return
-                if (javax.swing.SwingUtilities.isLeftMouseButton(e) && tree.getRowForLocation(e.x, e.y) < 0) {
-                    tree.clearSelection()
-                    showCollectionPopup(e.x, e.y)
-                }
-            }
+            override fun mousePressed(e: MouseEvent) = maybeShowPopup(e)
 
-            private fun handleDotsClick(e: MouseEvent): Boolean {
-                if (!javax.swing.SwingUtilities.isLeftMouseButton(e)) return false
-                var row = tree.getRowForLocation(e.x, e.y)
-                if (row < 0) {
-                    // The dots can sit beyond the row's hit width; fall back to the y position.
-                    val closest = tree.getClosestRowForLocation(e.x, e.y)
-                    val bounds = if (closest >= 0) tree.getRowBounds(closest) else null
-                    row = if (bounds != null && e.y >= bounds.y && e.y < bounds.y + bounds.height) closest else -1
+            override fun mouseReleased(e: MouseEvent) = maybeShowPopup(e)
+
+            private fun maybeShowPopup(e: MouseEvent) {
+                // Left clicks belong to the tree (select, expand/collapse); only the platform
+                // popup trigger opens the action menu. Check both press and release because
+                // Windows and macOS report popup triggers at different times.
+                if (!e.isPopupTrigger) return
+                val row = tree.getRowForLocation(e.x, e.y)
+                if (row >= 0) {
+                    tree.selectionPath = tree.getPathForRow(row)
+                } else {
+                    tree.clearSelection()
                 }
-                if (row < 0) return false
-                // The renderer right-aligns the dots to the viewport edge; use the same formula
-                // instead of row bounds, whose width differs between IntelliJ tree UIs.
-                val viewportWidth = (tree.parent as? javax.swing.JViewport)?.width ?: tree.width
-                val rightEdge = viewportWidth - 4
-                if (e.x < rightEdge - 40 || e.x > rightEdge) return false
-                tree.selectionPath = tree.getPathForRow(row)
                 showCollectionPopup(e.x, e.y)
-                return true
+                e.consume()
             }
         })
         panel.add(JBScrollPane(tree), BorderLayout.CENTER)
@@ -463,7 +397,11 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 override fun actionPerformed(e: ActionEvent?) = action()
             })
         }
-        bind(ADD_COLLECTION_STROKE, "astra.addCollection") { addCollection() }
+        bind(ADD_COLLECTION_STROKE, "astra.addCollection") {
+            // Collections are top-level only: inside a collection or folder only requests/folders are allowed.
+            val target = selectedTarget()
+            if (target !is RequestCollection && target !is RequestFolder) addCollection()
+        }
         bind(ADD_REQUEST_STROKE, "astra.addRequest") {
             val target = selectedTarget()
             if (target is RequestCollection || target is RequestFolder) addRequest(target) else newRequest()
@@ -505,7 +443,6 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             is RequestCollection -> {
                 item("Add Request", AstraIcons.request("GET"), ADD_REQUEST_STROKE) { addRequest(value) }
                 item("Add Folder", AstraIcons.folder, ADD_FOLDER_STROKE) { addFolder(value) }
-                item("Add Collection", AstraIcons.collection, ADD_COLLECTION_STROKE) { addCollection() }
                 menu.addSeparator()
                 item("Run Collection", AstraIcons.run, RUN_STROKE) { runRequests(value.name, value.allRequests()) }
                 menu.addSeparator()
@@ -944,6 +881,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     companion object {
         private const val NEW_TAB_ACTION = "astra.newTab"
         private const val CLOSE_TAB_ACTION = "astra.closeTab"
+        private const val PREV_TAB_ACTION = "astra.prevTab"
+        private const val NEXT_TAB_ACTION = "astra.nextTab"
         private val ADD_REQUEST_STROKE =
             KeyStroke.getKeyStroke(KeyEvent.VK_R, InputEvent.CTRL_DOWN_MASK or InputEvent.ALT_DOWN_MASK)
         private val ADD_FOLDER_STROKE =

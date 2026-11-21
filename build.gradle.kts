@@ -27,10 +27,32 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.3")
 }
 
+val envCertificateChain = providers.environmentVariable("CERTIFICATE_CHAIN")
+val envPrivateKey = providers.environmentVariable("PRIVATE_KEY")
+val envPrivateKeyPassword = providers.environmentVariable("PRIVATE_KEY_PASSWORD")
+val envPublishToken = providers.environmentVariable("PUBLISH_TOKEN")
+
 intellijPlatform {
     pluginConfiguration {
         ideaVersion {
             sinceBuild = "242"
+        }
+    }
+
+    // Signing is applied only when the CI secrets are present, so local builds stay unsigned.
+    if (envCertificateChain.isPresent && envPrivateKey.isPresent) {
+        signing {
+            certificateChain = envCertificateChain
+            privateKey = envPrivateKey
+            password = envPrivateKeyPassword
+        }
+    }
+
+    // Publishing to JetBrains Marketplace runs only with a token, e.g. on version tags in CI.
+    if (envPublishToken.isPresent) {
+        publishing {
+            token = envPublishToken
+            channels = listOf("default")
         }
     }
 }

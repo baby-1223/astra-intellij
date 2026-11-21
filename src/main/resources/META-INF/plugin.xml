@@ -2,10 +2,64 @@
     <id>com.astra.intellij</id>
     <name>Astra</name>
     <version>0.1.0</version>
-    <vendor>APost</vendor>
+    <vendor url="https://github.com/baby-1223/astra-intellij">APost</vendor>
+
+    <icon>/icons/astra-plugin.svg</icon>
+
     <description><![CDATA[
-        Local-first API debugging tool: collections, environments, HTTP requests, response viewer, cURL import/export and history.
+        <h2>Astra: Local-first API client for JetBrains IDEs</h2>
+        <p>
+            Astra is a production-ready HTTP workspace that lives inside your IDE. Design, send, and debug
+            requests without leaving the editor, and keep every collection, environment, and response on
+            your own machine.
+        </p>
+
+        <h3>Key capabilities</h3>
+        <ul>
+            <li><b>Request workspace</b>: method, URL, query parameters, headers, body, and authorization in one editor.</li>
+            <li><b>Collections and folders</b>: organize requests in a project-scoped tree with rename, duplicate, and delete.</li>
+            <li><b>Environments</b>: named variable sets with <code>{{variable}}</code> substitution across URLs, headers, and bodies.</li>
+            <li><b>Response viewer</b>: formatted body, headers, cookies, timing, and response size.</li>
+            <li><b>Tests and history</b>: lightweight assertions on status, body, and time, plus a searchable request history.</li>
+            <li><b>Collection runner</b>: iterate a collection or folder with data files, delays, per-iteration results, and CSV/JSON export.</li>
+            <li><b>Import and export</b>: Postman collections and environments, OpenAPI 3.0, cURL commands, and native Astra workspaces.</li>
+        </ul>
+
+        <h3>Designed for privacy</h3>
+        <p>
+            Astra is local-first. Requests are executed directly from your IDE, and all workspace data is
+            stored in a plain JSON file inside your project. No account, no synchronization service, and
+            no telemetry.
+        </p>
+
+        <h3>Getting started</h3>
+        <ol>
+            <li>Open the <b>Astra</b> tool window on the right side of the IDE.</li>
+            <li>Create a collection, add a request, and enter the target URL.</li>
+            <li>Optionally define environment variables, then press <b>Send</b>.</li>
+        </ol>
+
+        <h3>Compatibility</h3>
+        <p>
+            Requires IntelliJ IDEA (Community or Ultimate) 2024.2 or later, or any JetBrains IDE based on
+            the same platform version. Dark and light themes are fully supported.
+        </p>
+
+        <h3>Support</h3>
+        <p>
+            Source code, issue tracker, and release notes: <a href="https://github.com/baby-1223/astra-intellij">github.com/baby-1223/astra-intellij</a>
+        </p>
     ]]></description>
+
+    <change-notes><![CDATA[
+        <h3>0.1.0</h3>
+        <ul>
+            <li>Initial release: collections, folders, environments, HTTP requests, response viewer, tests, history.</li>
+            <li>Collection runner with data files, iterations, delays, and report export.</li>
+            <li>Postman, OpenAPI 3.0, cURL, and native workspace import/export.</li>
+        </ul>
+    ]]></change-notes>
+
     <idea-version since-build="242"/>
     <depends>com.intellij.modules.platform</depends>
     <extensions defaultExtensionNs="com.intellij">

@@ -1,6 +1,7 @@
 package com.astra.intellij.ui
 
 import com.intellij.openapi.util.IconLoader
+import com.intellij.ui.JBColor
 import javax.swing.Icon
 
 object AstraIcons {
@@ -26,13 +27,17 @@ object AstraIcons {
         else -> requestDefault
     }
 
-    fun methodColor(method: String): String = when (method.uppercase()) {
-        "GET" -> "#2E9E6B"
-        "POST" -> "#E8A33D"
-        "PUT" -> "#3B82F6"
-        "PATCH" -> "#9B59D0"
-        "DELETE" -> "#E05252"
-        else -> "#8A94A6"
+    fun methodColor(method: String): String {
+        // Light themes need darker colors for readable text on a white tree/combo background.
+        val color = when (method.uppercase()) {
+            "GET" -> JBColor(0x1F7A4D, 0x4CC38A)
+            "POST" -> JBColor(0x8A5200, 0xE8A33D)
+            "PUT" -> JBColor(0x1D4ED8, 0x8AB4F8)
+            "PATCH" -> JBColor(0x7E22CE, 0xC084FC)
+            "DELETE" -> JBColor(0xB3261E, 0xF08A85)
+            else -> JBColor(0x4B5563, 0xA7B0BE)
+        }
+        return "#" + (color.rgb and 0xFFFFFF).toString(16).padStart(6, '0').uppercase()
     }
 
     private fun load(name: String): Icon =

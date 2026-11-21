@@ -141,6 +141,28 @@ class RunnerDialog(
         iterationFilter.addActionListener { refreshVisibleRows() }
         styleTable(resultTable, failureTable)
         installRunShortcut()
+        installThemeListener()
+    }
+
+    /** Dialogs are outside the project frame, so they need their own theme refresh. */
+    private val themeDisposable = com.intellij.openapi.util.Disposer.newDisposable("Astra runner theme")
+
+    private fun installThemeListener() {
+        ApplicationManager.getApplication().messageBus.connect(themeDisposable)
+            .subscribe(com.intellij.ide.ui.LafManagerListener.TOPIC, com.intellij.ide.ui.LafManagerListener {
+                javax.swing.SwingUtilities.updateComponentTreeUI(contentPane)
+                styleTable(resultTable, failureTable)
+                dataFileLabel.foreground = RunnerColors.secondary
+                progressLabel.foreground = RunnerColors.secondary
+                emptyStateLabel.foreground = RunnerColors.secondary
+                refreshSummary()
+                contentPane.repaint()
+            })
+    }
+
+    override fun dispose() {
+        com.intellij.openapi.util.Disposer.dispose(themeDisposable)
+        super.dispose()
     }
 
     private fun installRunShortcut() {
