@@ -85,11 +85,15 @@ class RunnerDialog(
     private val failureTable = JTable(failureModel)
     private val iterationFilter = JComboBox<String>().apply {
         addItem("All Iterations")
-        preferredSize = Dimension(200, preferredSize.height)
-        maximumSize = Dimension(200, preferredSize.height)
+        preferredSize = Dimension(JBUI.scale(200), preferredSize.height)
+        maximumSize = Dimension(JBUI.scale(200), preferredSize.height)
     }
-    private val iterationsSpinner = numberSpinner(1, 1, 10_000, 1).apply { preferredSize = Dimension(90, preferredSize.height) }
-    private val delaySpinner = numberSpinner(0, 0, 600_000, 100).apply { preferredSize = Dimension(90, preferredSize.height) }
+    private val iterationsSpinner = numberSpinner(1, 1, 10_000, 1).apply {
+        preferredSize = Dimension(JBUI.scale(90), preferredSize.height)
+    }
+    private val delaySpinner = numberSpinner(0, 0, 600_000, 100).apply {
+        preferredSize = Dimension(JBUI.scale(90), preferredSize.height)
+    }
     private val continueCheckBox = JCheckBox("Continue on failure", true)
     private val chooseButton = JButton("Choose Data File")
     private val clearButton = JButton("Clear")
@@ -180,7 +184,7 @@ class RunnerDialog(
 
     private fun styleTable(vararg tables: JTable) {
         tables.forEach { table ->
-            table.rowHeight = 26
+            table.rowHeight = JBUI.scale(26)
             table.setShowGrid(false)
             table.intercellSpacing = Dimension(0, 0)
             table.fillsViewportHeight = true
@@ -296,7 +300,7 @@ class RunnerDialog(
         add(createConfigPanel(), BorderLayout.NORTH)
         add(createResultsPanel(), BorderLayout.CENTER)
         add(progressLabel, BorderLayout.SOUTH)
-        preferredSize = Dimension(980, 680)
+        preferredSize = JBUI.size(980, 680)
     }
 
     override fun createActions(): Array<Action> = arrayOf(exportAction, stopAction, runAction, cancelAction)

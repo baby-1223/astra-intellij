@@ -2,6 +2,7 @@ package com.astra.intellij.ui
 
 import com.astra.intellij.model.AstraEnvironment
 import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
@@ -66,7 +67,7 @@ class EnvironmentDialog(
     override fun createCenterPanel(): JComponent {
         val left = JPanel(BorderLayout()).apply {
             add(JScrollPane(list), BorderLayout.CENTER)
-            preferredSize = Dimension(180, 320)
+            preferredSize = JBUI.size(180, 320)
         }
         val right = JPanel(BorderLayout(0, 8)).apply {
             add(JPanel(BorderLayout()).apply {
@@ -96,8 +97,8 @@ class EnvironmentDialog(
             }, BorderLayout.SOUTH)
         }
         return JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right).apply {
-            dividerLocation = 180
-            preferredSize = Dimension(680, 360)
+            dividerLocation = JBUI.scale(180)
+            preferredSize = JBUI.size(680, 360)
         }
     }
 

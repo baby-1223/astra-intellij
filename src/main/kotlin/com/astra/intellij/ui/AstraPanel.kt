@@ -22,6 +22,7 @@ import com.intellij.util.ui.WrapLayout
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.FlowLayout
+import java.awt.Toolkit
 import java.awt.event.ActionEvent
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
@@ -156,6 +157,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             override fun actionPerformed(e: ActionEvent?) = newRequest()
         })
         inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_W, InputEvent.CTRL_DOWN_MASK), CLOSE_TAB_ACTION)
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_W, InputEvent.META_DOWN_MASK), CLOSE_TAB_ACTION)
         actionMap.put(CLOSE_TAB_ACTION, object : AbstractAction() {
             override fun actionPerformed(e: ActionEvent?) {
                 currentSession()?.let { closeSession(it) }
@@ -392,7 +394,10 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
 
     private fun registerTreeActions() {
         fun bind(stroke: KeyStroke, name: String, action: () -> Unit) {
-            tree.getInputMap(JComponent.WHEN_FOCUSED).put(stroke, name)
+            val inputMap = tree.getInputMap(JComponent.WHEN_FOCUSED)
+            inputMap.put(stroke, name)
+            // Accept both Ctrl and Cmd so shortcuts behave the same on Windows/Linux and macOS.
+            alternateModifierStroke(stroke)?.let { inputMap.put(it, name) }
             tree.actionMap.put(name, object : AbstractAction() {
                 override fun actionPerformed(e: ActionEvent?) = action()
             })
@@ -420,6 +425,23 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         bind(DELETE_STROKE, "astra.deleteSelection") { selectedNodeValue()?.let { deleteValue(it) } }
         bind(KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0), "astra.deleteSelectionBs") {
             selectedNodeValue()?.let { deleteValue(it) }
+        }
+    }
+
+    private fun alternateModifierStroke(stroke: KeyStroke): KeyStroke? {
+        val modifiers = stroke.modifiers
+        return when {
+            modifiers and InputEvent.CTRL_DOWN_MASK != 0 ->
+                KeyStroke.getKeyStroke(
+                    stroke.keyCode,
+                    (modifiers and InputEvent.CTRL_DOWN_MASK.inv()) or InputEvent.META_DOWN_MASK,
+                )
+            modifiers and InputEvent.META_DOWN_MASK != 0 ->
+                KeyStroke.getKeyStroke(
+                    stroke.keyCode,
+                    (modifiers and InputEvent.META_DOWN_MASK.inv()) or InputEvent.CTRL_DOWN_MASK,
+                )
+            else -> null
         }
     }
 
@@ -883,16 +905,17 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         private const val CLOSE_TAB_ACTION = "astra.closeTab"
         private const val PREV_TAB_ACTION = "astra.prevTab"
         private const val NEXT_TAB_ACTION = "astra.nextTab"
+        private val SHORTCUT_MASK: Int = Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx
         private val ADD_REQUEST_STROKE =
-            KeyStroke.getKeyStroke(KeyEvent.VK_R, InputEvent.CTRL_DOWN_MASK or InputEvent.ALT_DOWN_MASK)
+            KeyStroke.getKeyStroke(KeyEvent.VK_R, SHORTCUT_MASK or InputEvent.ALT_DOWN_MASK)
         private val ADD_FOLDER_STROKE =
-            KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK or InputEvent.ALT_DOWN_MASK)
+            KeyStroke.getKeyStroke(KeyEvent.VK_F, SHORTCUT_MASK or InputEvent.ALT_DOWN_MASK)
         private val ADD_COLLECTION_STROKE =
-            KeyStroke.getKeyStroke(KeyEvent.VK_C, InputEvent.CTRL_DOWN_MASK or InputEvent.ALT_DOWN_MASK)
+            KeyStroke.getKeyStroke(KeyEvent.VK_C, SHORTCUT_MASK or InputEvent.ALT_DOWN_MASK)
         private val RUN_STROKE =
-            KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK or InputEvent.SHIFT_DOWN_MASK)
+            KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, SHORTCUT_MASK or InputEvent.SHIFT_DOWN_MASK)
         private val RENAME_STROKE = KeyStroke.getKeyStroke(KeyEvent.VK_F2, 0)
-        private val DUPLICATE_STROKE = KeyStroke.getKeyStroke(KeyEvent.VK_D, InputEvent.CTRL_DOWN_MASK)
+        private val DUPLICATE_STROKE = KeyStroke.getKeyStroke(KeyEvent.VK_D, SHORTCUT_MASK)
         private val DELETE_STROKE = KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0)
         private const val DOTS_HTML = " <span style='color:#999999'>\u22EF</span>"
     }

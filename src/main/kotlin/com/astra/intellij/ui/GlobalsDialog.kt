@@ -2,6 +2,7 @@ package com.astra.intellij.ui
 
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
@@ -45,7 +46,7 @@ class GlobalsDialog(
             add(JLabel("<html>Globals work in every environment as {{name}}. Environment variables override globals.</html>"), BorderLayout.NORTH)
             add(JScrollPane(table), BorderLayout.CENTER)
             add(buttons, BorderLayout.SOUTH)
-            preferredSize = Dimension(480, 320)
+            preferredSize = JBUI.size(480, 320)
         }
     }
 

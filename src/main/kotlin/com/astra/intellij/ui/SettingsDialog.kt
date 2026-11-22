@@ -4,6 +4,7 @@ import com.astra.intellij.model.AstraSettings
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
+import com.intellij.util.ui.JBUI
 import java.awt.Dimension
 import java.awt.GridLayout
 import javax.swing.JCheckBox
@@ -41,7 +42,7 @@ class SettingsDialog(
             add(verifySslBox.apply { toolTipText = "Disable only for self-signed development certificates" })
             add(JLabel("Redirects"))
             add(redirectsBox)
-            preferredSize = Dimension(420, 190)
+            preferredSize = JBUI.size(420, 190)
         }
     }
 
