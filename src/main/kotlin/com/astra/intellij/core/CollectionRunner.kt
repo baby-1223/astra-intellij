@@ -70,10 +70,27 @@ class CollectionRunner(
         dataRows.forEachIndexed { iteration, dataRow ->
             requests.forEachIndexed { index, request ->
                 if (cancelled) return
-                val vars = (baseVars + dataRow).toMutableMap()
-                val resolvedVars = PreRequestService.execute(request.preRequest, vars, environment)
-                val call = try {
-                    http.send(request, resolvedVars, settings)
+                // Overlay fresh environment values so post-response captures are visible to
+                // the following requests in the same run.
+                val vars = (baseVars + environment?.variables.orEmpty() + dataRow).toMutableMap()
+                // Pre-request scripts may modify pm.request; work on a copy so the collection
+                // definition stays untouched between runs.
+                val working = request.copy(
+                    params = request.params.map { it.copy() }.toMutableList(),
+                    headers = request.headers.map { it.copy() }.toMutableList(),
+                    formFields = request.formFields.map { it.copy() }.toMutableList(),
+                    assertions = request.assertions.toMutableList(),
+                    preRequest = request.preRequest.toMutableList(),
+                    postResponse = request.postResponse.toMutableList(),
+                    auth = request.auth.copy(),
+                )
+                val resolvedVars: MutableMap<String, String>
+                val call: HttpCall
+                try {
+                    resolvedVars = PreRequestService.execute(working.preRequest, vars, environment, working) { callRequest, resolved ->
+                        http.sendBlocking(callRequest, resolved, settings)
+                    }
+                    call = http.send(working, resolvedVars, settings)
                 } catch (e: Exception) {
                     val outcome = RunItemResult(request, 0, 0, emptyList(), e.message ?: "Invalid request")
                     onResult(iteration, index, outcome)
@@ -85,6 +102,7 @@ class CollectionRunner(
                 currentCall = call
                 val outcome = try {
                     val result = call.future.get(settings.timeoutSeconds.toLong() + 10, TimeUnit.SECONDS)
+                    PostResponseService.execute(request.postResponse, result, resolvedVars, environment)
                     RunItemResult(
                         request = request,
                         status = result.status,

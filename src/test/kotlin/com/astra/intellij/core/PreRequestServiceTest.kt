@@ -1,6 +1,7 @@
 package com.astra.intellij.core
 
 import com.astra.intellij.model.AstraEnvironment
+import com.astra.intellij.model.HttpResult
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -46,5 +47,62 @@ class PreRequestServiceTest {
         val vars = PreRequestService.execute(listOf("set b 2"), base, null)
         assertEquals(mapOf("a" to "1"), base)
         assertEquals(mapOf("a" to "1", "b" to "2"), vars)
+    }
+
+    @Test
+    fun `pre-request block sends a sub request and captures its response`() {
+        val environment = AstraEnvironment(name = "dev")
+        val sent = mutableListOf<com.astra.intellij.model.AstraRequest>()
+
+        val vars = PreRequestService.execute(
+            listOf(
+                "request POST https://{{host}}/auth/login",
+                "  header Content-Type: application/json",
+                "  body {\"user\":\"{{user}}\"}",
+                "  set token json $.data.token",
+                "  set session header X-Session-Id",
+                "set host api.test",
+            ),
+            mapOf("host" to "api.test", "user" to "astra"),
+            environment,
+        ) { request, _ ->
+            sent.add(request)
+            HttpResult(
+                status = 200,
+                headers = mapOf("X-Session-Id" to listOf("s-1")),
+                body = """{"data":{"token":"t-9"}}""".toByteArray(),
+            )
+        }
+
+        assertEquals(1, sent.size)
+        assertEquals("POST", sent.single().method)
+        assertEquals("https://{{host}}/auth/login", sent.single().url)
+        assertEquals("Content-Type", sent.single().headers.single().key)
+        assertEquals("json", sent.single().bodyMode)
+        assertEquals("t-9", vars["token"])
+        assertEquals("t-9", environment.variables["token"])
+        assertEquals("s-1", vars["session"])
+        assertEquals("s-1", environment.variables["session"])
+        assertEquals("api.test", vars["host"])
+    }
+
+    @Test
+    fun `variables set before a block are visible to its request and captures`() {
+        val environment = AstraEnvironment(name = "dev")
+        val vars = PreRequestService.execute(
+            listOf(
+                "set base https://api.test",
+                "request GET {{base}}/token",
+                "  set token json $.token",
+            ),
+            emptyMap(),
+            environment,
+        ) { request, resolved ->
+            assertEquals("{{base}}/token", request.url)
+            assertEquals("https://api.test", resolved["base"])
+            HttpResult(body = """{"token":"abc"}""".toByteArray())
+        }
+
+        assertEquals("abc", vars["token"])
     }
 }

@@ -50,6 +50,20 @@ class HttpService(
         return HttpCall(future, exchange)
     }
 
+    /** Sends a request and waits for the response; call from a background thread. */
+    fun sendBlocking(
+        request: AstraRequest,
+        vars: Map<String, String> = emptyMap(),
+        settings: AstraSettings = AstraSettings(),
+    ): HttpResult = try {
+        send(request, vars, settings).future.get(
+            settings.timeoutSeconds.toLong() + 10,
+            java.util.concurrent.TimeUnit.SECONDS,
+        )
+    } catch (error: java.util.concurrent.ExecutionException) {
+        throw error.cause ?: error
+    }
+
     private fun createRequest(request: AstraRequest, vars: Map<String, String>, settings: AstraSettings): HttpRequest {
         val method = VariableResolver.resolve(request.method, vars).uppercase()
         val builder = HttpRequest.newBuilder()

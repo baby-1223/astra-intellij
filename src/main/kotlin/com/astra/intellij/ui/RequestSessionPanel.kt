@@ -3,6 +3,7 @@ package com.astra.intellij.ui
 import com.astra.intellij.core.CurlService
 import com.astra.intellij.core.HttpCall
 import com.astra.intellij.core.HttpService
+import com.astra.intellij.core.PostResponseService
 import com.astra.intellij.core.PreRequestService
 import com.astra.intellij.core.TestService
 import com.astra.intellij.model.AstraRequest
@@ -45,6 +46,8 @@ class RequestSessionPanel(
     var savedRequest: AstraRequest? = null
         private set
     private var activeCall: HttpCall? = null
+    private var preparingPreRequest = false
+    private var cancelPreparing = false
 
     /** Fired when the request name or method changes, so the owning tab can update its title. */
     var onTitleChanged: (() -> Unit)? = null
@@ -60,7 +63,10 @@ class RequestSessionPanel(
         add(split, BorderLayout.CENTER)
         editor.showRequest(request)
         editor.sendButton.addActionListener { send() }
-        editor.cancelButton.addActionListener { activeCall?.cancel() }
+        editor.cancelButton.addActionListener {
+            cancelPreparing = true
+            activeCall?.cancel()
+        }
         response.onHistorySelected = {
             request = deepCopy(it.request)
             savedRequest = null
@@ -89,6 +95,8 @@ class RequestSessionPanel(
     }
 
     fun showMessage(message: String) = response.showMessage(message)
+
+    fun refreshHistory() = response.setHistory(workspace.data.history)
 
     fun save() {
         commitEditor()
@@ -141,13 +149,20 @@ class RequestSessionPanel(
         inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.META_DOWN_MASK), SEND_ACTION_KEY)
         editor.actionMap.put(SEND_ACTION_KEY, object : AbstractAction() {
             override fun actionPerformed(e: ActionEvent?) {
-                if (activeCall == null) send() else activeCall?.cancel()
+                when {
+                    activeCall != null -> activeCall?.cancel()
+                    preparingPreRequest -> {
+                        cancelPreparing = true
+                        activeCall?.cancel()
+                    }
+                    else -> send()
+                }
             }
         })
     }
 
     private fun send() {
-        if (activeCall != null) return
+        if (activeCall != null || preparingPreRequest) return
         commitEditor()
         if (request.url.isBlank()) {
             Messages.showErrorDialog(project, "Enter a request URL first", "Cannot send")
@@ -156,53 +171,89 @@ class RequestSessionPanel(
         editor.setSending(true)
         response.showLoading()
         val snapshot = deepCopy(request)
-        val vars = PreRequestService.execute(
-            snapshot.preRequest,
-            workspace.activeVariables(),
-            workspace.data.environments.firstOrNull { it.id == workspace.data.activeEnvironmentId },
-        )
-        val call = try {
-            http.send(snapshot, vars, workspace.data.settings)
-        } catch (error: Exception) {
-            editor.setSending(false)
-            response.showError(error.message ?: "Invalid request URL or configuration")
-            return
-        }
-        activeCall = call
-        call.future.whenComplete { result, error ->
+        val settings = workspace.data.settings
+        val environment = workspace.data.environments.firstOrNull { it.id == workspace.data.activeEnvironmentId }
+        val baseVars = workspace.activeVariables()
+        preparingPreRequest = true
+        cancelPreparing = false
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val vars = try {
+                PreRequestService.execute(snapshot.preRequest, baseVars, environment, snapshot) { call, resolved ->
+                    http.sendBlocking(call, resolved, settings)
+                }
+            } catch (error: Exception) {
+                ApplicationManager.getApplication().invokeLater({
+                    if (project.isDisposed) return@invokeLater
+                    preparingPreRequest = false
+                    editor.setSending(false)
+                    response.showError(error.message ?: "Pre-request failed")
+                }, ModalityState.any())
+                return@executeOnPooledThread
+            }
             ApplicationManager.getApplication().invokeLater({
                 if (project.isDisposed) return@invokeLater
-                activeCall = null
-                editor.setSending(false)
-                val entry = if (result != null) {
-                    response.showResult(result)
-                    response.showTestResults(TestService.evaluate(snapshot.assertions, result))
-                    HistoryEntry(
-                        request = snapshot,
-                        status = result.status,
-                        statusText = result.statusText,
-                        timeMs = result.elapsedMs,
-                        bodySize = result.body.size,
-                    )
-                } else {
-                    val cause = error?.cause ?: error
-                    val message = if (cause is java.util.concurrent.CancellationException) {
-                        "Request cancelled"
-                    } else {
-                        cause?.message ?: "Unknown network error"
-                    }
-                    response.showError(message)
-                    HistoryEntry(
-                        request = snapshot,
-                        status = 0,
-                        statusText = message,
-                        timeMs = 0,
-                        bodySize = 0,
-                    )
+                preparingPreRequest = false
+                if (cancelPreparing) {
+                    cancelPreparing = false
+                    editor.setSending(false)
+                    response.showMessage("Request cancelled")
+                    return@invokeLater
                 }
-                workspace.data.history.add(0, entry)
-                while (workspace.data.history.size > 100) workspace.data.history.removeLast()
-                response.setHistory(workspace.data.history)
+                val call = try {
+                    http.send(snapshot, vars, settings)
+                } catch (error: Exception) {
+                    editor.setSending(false)
+                    response.showError(error.message ?: "Invalid request URL or configuration")
+                    return@invokeLater
+                }
+                activeCall = call
+                call.future.whenComplete { result, error ->
+                    ApplicationManager.getApplication().invokeLater({
+                        if (project.isDisposed) return@invokeLater
+                        activeCall = null
+                        editor.setSending(false)
+                        val entry = if (result != null) {
+                            response.showResult(result)
+                            val updates = PostResponseService.execute(
+                                snapshot.postResponse,
+                                result,
+                                vars,
+                                workspace.data.environments.firstOrNull {
+                                    it.id == workspace.data.activeEnvironmentId
+                                },
+                            )
+                            if (updates.isNotEmpty()) {
+                                response.appendStatus("Vars ${updates.size}")
+                            }
+                            response.showTestResults(TestService.evaluate(snapshot.assertions, result))
+                            HistoryEntry(
+                                request = snapshot,
+                                status = result.status,
+                                statusText = result.statusText,
+                                timeMs = result.elapsedMs,
+                                bodySize = result.body.size,
+                            )
+                        } else {
+                            val cause = error?.cause ?: error
+                            val message = if (cause is java.util.concurrent.CancellationException) {
+                                "Request cancelled"
+                            } else {
+                                cause?.message ?: "Unknown network error"
+                            }
+                            response.showError(message)
+                            HistoryEntry(
+                                request = snapshot,
+                                status = 0,
+                                statusText = message,
+                                timeMs = 0,
+                                bodySize = 0,
+                            )
+                        }
+                        workspace.data.history.add(0, entry)
+                        while (workspace.data.history.size > 100) workspace.data.history.removeLast()
+                        response.setHistory(workspace.data.history)
+                    }, ModalityState.any())
+                }
             }, ModalityState.any())
         }
     }

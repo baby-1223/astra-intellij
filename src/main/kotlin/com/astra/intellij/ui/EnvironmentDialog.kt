@@ -17,7 +17,6 @@ import javax.swing.JLabel
 import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.JScrollPane
-import javax.swing.JSplitPane
 import javax.swing.JTable
 import javax.swing.JTextField
 import javax.swing.ListSelectionModel
@@ -67,7 +66,6 @@ class EnvironmentDialog(
     override fun createCenterPanel(): JComponent {
         val left = JPanel(BorderLayout()).apply {
             add(JScrollPane(list), BorderLayout.CENTER)
-            preferredSize = JBUI.size(180, 320)
         }
         val right = JPanel(BorderLayout(0, 8)).apply {
             add(JPanel(BorderLayout()).apply {
@@ -96,8 +94,10 @@ class EnvironmentDialog(
                 })
             }, BorderLayout.SOUTH)
         }
-        return JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right).apply {
-            dividerLocation = JBUI.scale(180)
+        // Use the platform splitter so the divider matches the rest of the Astra dialogs.
+        return com.intellij.ui.JBSplitter(false, 0.26f).apply {
+            firstComponent = left
+            secondComponent = right
             preferredSize = JBUI.size(680, 360)
         }
     }

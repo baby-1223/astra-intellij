@@ -35,6 +35,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
     private val bodyCards = JPanel(CardLayout())
     private val testsArea = JTextArea(6, 40)
     private val preRequestArea = JTextArea(4, 40)
+    private val postResponseArea = JTextArea(4, 40)
     private val authTypes = listOf("none", "bearer", "basic", "apikey")
     private val authTypeBox = JComboBox(arrayOf("None", "Bearer", "Basic", "API Key"))
     private val tokenField = JTextField()
@@ -129,8 +130,13 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         })
         tabs.addTab("Authorization", buildAuthPanel())
         tabs.addTab("Pre-request", JPanel(BorderLayout(0, 4)).apply {
-            add(JLabel("<html>One instruction per line: <b>set token {{\$guid}}</b> stores a variable in the active " +
-                "environment for this run · <b>unset debug</b> removes it · <b># comment</b></html>").apply {
+            add(JLabel("<html>Postman-compatible JavaScript, e.g. send a sub-request and store a value:<br/>" +
+                "<b>pm.sendRequest({url: pm.variables.replaceIn('{{baseUrl}}/auth/login'), method: 'POST',</b><br/>" +
+                "&nbsp;&nbsp;<b>header: {'Content-Type': 'application/json'},</b><br/>" +
+                "&nbsp;&nbsp;<b>body: {mode: 'raw', raw: JSON.stringify({user: 'demo'})}},</b><br/>" +
+                "&nbsp;&nbsp;<b>function (err, res) { pm.environment.set('token', res.json().data.token); });</b><br/>" +
+                "Also available: pm.variables.set/get, pm.request.headers.add, console.log.<br/>" +
+                "Simple lines still work: <b>set token {{\$guid}}</b> · <b>unset debug</b> · <b># comment</b>.</html>").apply {
                 foreground = UIUtil.getContextHelpForeground()
                 border = BorderFactory.createEmptyBorder(4, 4, 0, 4)
             }, BorderLayout.NORTH)
@@ -143,6 +149,15 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
                 border = BorderFactory.createEmptyBorder(4, 4, 0, 4)
             }, BorderLayout.NORTH)
             add(JScrollPane(testsArea), BorderLayout.CENTER)
+        })
+        tabs.addTab("Post-response", JPanel(BorderLayout(0, 4)).apply {
+            add(JLabel("<html>Runs after every response and saves values into the active environment: " +
+                "<b>set token json $.data.token</b> · <b>set sid header Set-Cookie</b> · " +
+                "<b>set id body \"id=(\\w+)\"</b> · <b>set host value {{baseUrl}}</b> · <b>unset token</b></html>").apply {
+                foreground = UIUtil.getContextHelpForeground()
+                border = BorderFactory.createEmptyBorder(4, 4, 0, 4)
+            }, BorderLayout.NORTH)
+            add(JScrollPane(postResponseArea), BorderLayout.CENTER)
         })
         bodyModeBox.addActionListener {
             updateBodyCard()
@@ -178,6 +193,7 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
         formTable.setValues(request.formFields)
         testsArea.text = request.assertions.joinToString("\n")
         preRequestArea.text = request.preRequest.joinToString("\n")
+        postResponseArea.text = request.postResponse.joinToString("\n")
         updateBodyCard()
         authTypeBox.selectedIndex = authTypes.indexOf(request.auth.type).coerceAtLeast(0)
         tokenField.text = request.auth.token
@@ -202,7 +218,11 @@ class RequestEditorPanel : JPanel(BorderLayout()) {
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .toMutableList()
+        // Keep indentation and blank lines: scripts use them for blocks and readability.
         request.preRequest = preRequestArea.text.lines()
+            .dropLastWhile { it.isBlank() }
+            .toMutableList()
+        request.postResponse = postResponseArea.text.lines()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .toMutableList()

@@ -135,6 +135,12 @@ class ResponsePanel : JPanel(BorderLayout()) {
         statusLabel.text = message
     }
 
+    /** Appends a short suffix such as "Vars 2" without discarding the previous status. */
+    fun appendStatus(suffix: String) {
+        baseStatus = "$baseStatus  ·  $suffix"
+        statusLabel.text = baseStatus
+    }
+
     fun showLoading() {
         statusLabel.foreground = com.intellij.ui.JBColor.foreground()
         baseStatus = "Sending request..."

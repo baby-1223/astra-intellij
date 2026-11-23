@@ -17,19 +17,19 @@
         <h3>Key capabilities</h3>
         <ul>
             <li><b>Request workspace</b>: method, URL, query parameters, headers, body, and authorization in one editor.</li>
-            <li><b>Collections and folders</b>: organize requests in a project-scoped tree with rename, duplicate, and delete.</li>
+            <li><b>Collections and folders</b>: organize requests in a shared tree with rename, duplicate, and delete.</li>
             <li><b>Environments</b>: named variable sets with <code>{{variable}}</code> substitution across URLs, headers, and bodies.</li>
             <li><b>Response viewer</b>: formatted body, headers, cookies, timing, and response size.</li>
-            <li><b>Tests and history</b>: lightweight assertions on status, body, and time, plus a searchable request history.</li>
+            <li><b>Tests and history</b>: lightweight assertions on status, body, and time, plus post-response scripts that capture values into environments.</li>
             <li><b>Collection runner</b>: iterate a collection or folder with data files, delays, per-iteration results, and CSV/JSON export.</li>
-            <li><b>Import and export</b>: Postman collections and environments, OpenAPI 3.0, cURL commands, and native Astra workspaces.</li>
+            <li><b>Import and export</b>: Postman collections, environments and data dumps, Insomnia requests and full exports, OpenAPI 3.0, cURL commands, and native Astra workspaces.</li>
         </ul>
 
         <h3>Designed for privacy</h3>
         <p>
             Astra is local-first. Requests are executed directly from your IDE, and all workspace data is
-            stored in a plain JSON file inside your project. No account, no synchronization service, and
-            no telemetry.
+            stored in a plain JSON file in your IDE configuration directory, shared by every IDE window.
+            No account, no synchronization service, and no telemetry.
         </p>
 
         <h3>Getting started</h3>

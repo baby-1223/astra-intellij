@@ -136,6 +136,9 @@ class RunnerDialog(
         override fun doAction(e: java.awt.event.ActionEvent?) = exportReport()
     }
 
+    /** Dialogs are outside the project frame, so they need their own theme refresh. */
+    private val themeDisposable = com.intellij.openapi.util.Disposer.newDisposable("Astra runner theme")
+
     init {
         title = "Run $runName"
         setCancelButtonText("Close")
@@ -147,9 +150,6 @@ class RunnerDialog(
         installRunShortcut()
         installThemeListener()
     }
-
-    /** Dialogs are outside the project frame, so they need their own theme refresh. */
-    private val themeDisposable = com.intellij.openapi.util.Disposer.newDisposable("Astra runner theme")
 
     private fun installThemeListener() {
         ApplicationManager.getApplication().messageBus.connect(themeDisposable)

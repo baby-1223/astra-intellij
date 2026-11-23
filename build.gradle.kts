@@ -7,7 +7,7 @@ import org.gradle.api.tasks.testing.Test
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
 group = "com.astra"
-version = "0.2.0"
+version = "0.3.0"
 
 repositories {
     mavenCentral()
@@ -23,6 +23,7 @@ dependencies {
         testFramework(TestFrameworkType.JUnit5)
     }
     implementation("com.google.code.gson:gson:2.11.0")
+    implementation("org.mozilla:rhino:1.7.15")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.3")
 }

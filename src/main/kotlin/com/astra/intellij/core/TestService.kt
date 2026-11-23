@@ -113,7 +113,7 @@ object TestService {
         }
     }
 
-    private fun jsonAt(root: JsonElement, path: String): JsonElement? {
+    internal fun jsonAt(root: JsonElement, path: String): JsonElement? {
         var current: JsonElement? = root
         val segments = Regex("\\.([^.\\[\\]]+)|\\[(\\d+)]").findAll(path.removePrefix("$"))
         for (segment in segments) {

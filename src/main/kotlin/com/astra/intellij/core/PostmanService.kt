@@ -11,7 +11,18 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.nio.charset.StandardCharsets
 import java.util.Locale
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+
+data class PostmanDataDump(
+    val collections: List<RequestCollection> = emptyList(),
+    val environments: List<AstraEnvironment> = emptyList(),
+)
 
 /**
  * Imports and exports Postman Collection v2.x and Postman Environment JSON.
@@ -19,16 +30,20 @@ import java.util.Locale
 class PostmanService {
     private val gson = GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create()
 
-    fun parseCollection(json: String): RequestCollection {
-        val root = JsonParser.parseString(json).asJsonObject
+    fun parseCollection(json: String): RequestCollection =
+        parseCollection(JsonParser.parseString(json).asJsonObject)
+
+    fun parseEnvironment(json: String): AstraEnvironment? =
+        parseEnvironment(JsonParser.parseString(json).asJsonObject)
+
+    private fun parseCollection(root: JsonObject): RequestCollection {
         val info = root.obj("info")
         val collection = RequestCollection(name = info?.string("name")?.ifBlank { null } ?: "Imported Collection")
         root.array("item")?.let { parseItems(it, collection, null) }
         return collection
     }
 
-    fun parseEnvironment(json: String): AstraEnvironment? {
-        val root = JsonParser.parseString(json).asJsonObject
+    private fun parseEnvironment(root: JsonObject): AstraEnvironment? {
         val values = root.array("values") ?: return null
         val environment = AstraEnvironment(name = root.string("name")?.ifBlank { null } ?: "Imported Environment")
         values.forEach { element ->
@@ -41,6 +56,94 @@ class PostmanService {
         }
         return environment
     }
+
+    /**
+     * Reads a Postman data dump. Accepts a ZIP produced by "Export Data" (one collection or
+     * environment JSON per file), a single collection/environment JSON, or an array of JSON objects.
+     */
+    fun parseDataDump(bytes: ByteArray): PostmanDataDump {
+        if (isZip(bytes)) return parseZip(bytes)
+        return parseJsonPayload(String(bytes, StandardCharsets.UTF_8))
+    }
+
+    /**
+     * Writes a Postman-compatible data dump: one JSON file per collection under "collections/"
+     * and one per environment under "environments/".
+     */
+    fun exportDataDump(
+        collections: List<RequestCollection>,
+        environments: List<AstraEnvironment>,
+    ): ByteArray {
+        val output = ByteArrayOutputStream()
+        ZipOutputStream(output).use { zip ->
+            val used = mutableSetOf<String>()
+            fun add(folder: String, name: String, content: String) {
+                val base = name.replace(Regex("[^A-Za-z0-9._ -]"), "_").trim().ifBlank { "astra" }
+                var fileName = "$folder/$base.json"
+                var index = 2
+                while (!used.add(fileName)) {
+                    fileName = "$folder/$base-${index++}.json"
+                }
+                zip.putNextEntry(ZipEntry(fileName))
+                zip.write(content.toByteArray(StandardCharsets.UTF_8))
+                zip.closeEntry()
+            }
+            collections.forEach { add("collections", it.name, exportCollection(listOf(it), it.name)) }
+            environments.forEach { add("environments", it.name, exportEnvironment(it)) }
+        }
+        return output.toByteArray()
+    }
+
+    private fun isZip(bytes: ByteArray): Boolean =
+        bytes.size >= 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte()
+
+    private fun parseZip(bytes: ByteArray): PostmanDataDump {
+        val collections = mutableListOf<RequestCollection>()
+        val environments = mutableListOf<AstraEnvironment>()
+        ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
+            var entry = zip.nextEntry
+            while (entry != null) {
+                if (!entry.isDirectory && entry.name.endsWith(".json", ignoreCase = true)) {
+                    val text = zip.readBytes().toString(StandardCharsets.UTF_8)
+                    runCatching { parseJsonPayload(text) }.getOrNull()?.let {
+                        collections.addAll(it.collections)
+                        environments.addAll(it.environments)
+                    }
+                }
+                zip.closeEntry()
+                entry = zip.nextEntry
+            }
+        }
+        return PostmanDataDump(collections, environments)
+    }
+
+    private fun parseJsonPayload(text: String): PostmanDataDump {
+        val trimmed = text.trimStart()
+        if (trimmed.startsWith("[")) {
+            val collections = mutableListOf<RequestCollection>()
+            val environments = mutableListOf<AstraEnvironment>()
+            JsonParser.parseString(text).asJsonArray.forEach { element ->
+                if (!element.isJsonObject) return@forEach
+                val obj = element.asJsonObject
+                when {
+                    isEnvironment(obj) -> parseEnvironment(obj)?.let { environments.add(it) }
+                    obj.has("item") || obj.has("info") -> collections.add(parseCollection(obj))
+                }
+            }
+            return PostmanDataDump(collections, environments)
+        }
+        val root = JsonParser.parseString(text).asJsonObject
+        return if (isEnvironment(root)) {
+            PostmanDataDump(environments = listOfNotNull(parseEnvironment(root)))
+        } else {
+            PostmanDataDump(collections = listOf(parseCollection(root)))
+        }
+    }
+
+    private fun isEnvironment(root: JsonObject): Boolean =
+        root.array("values") != null &&
+            (root.string("_postman_variable_scope") == "environment" || !root.has("item"))
+
 
     fun exportCollection(collections: List<RequestCollection>, name: String): String {
         val root = JsonObject()
@@ -103,6 +206,7 @@ class PostmanService {
             when {
                 request != null && !request.isJsonNull -> {
                     val parsed = parseRequest(name, request)
+                    parseEvents(item.array("event"), parsed)
                     if (parent != null) parent.requests.add(parsed) else collection.requests.add(parsed)
                 }
                 children != null -> {
@@ -127,6 +231,18 @@ class PostmanService {
         parseBody(obj.obj("body"), request)
         parseAuth(obj.obj("auth"), request)
         return request
+    }
+
+    /** Imports the "prerequest" event script so Postman scripts keep working after the import. */
+    private fun parseEvents(events: JsonArray?, request: AstraRequest) {
+        events?.forEach { element ->
+            val event = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            if (event.string("listen") != "prerequest") return@forEach
+            val exec = event.obj("script")?.array("exec")?.mapNotNull { line ->
+                if (line.isJsonPrimitive) line.asString else null
+            } ?: return@forEach
+            if (exec.isNotEmpty()) request.preRequest = exec.toMutableList()
+        }
     }
 
     private fun parseUrl(element: JsonElement?, request: AstraRequest) {
@@ -304,6 +420,17 @@ class PostmanService {
             }
             authJson(request.auth)?.let { add("auth", it) }
         })
+        if (request.preRequest.isNotEmpty()) {
+            add("event", JsonArray().apply {
+                add(JsonObject().apply {
+                    addProperty("listen", "prerequest")
+                    add("script", JsonObject().apply {
+                        addProperty("type", "text/javascript")
+                        add("exec", JsonArray().apply { request.preRequest.forEach { add(it) } })
+                    })
+                })
+            })
+        }
     }
 
     private fun urlJson(request: AstraRequest): JsonObject = JsonObject().apply {

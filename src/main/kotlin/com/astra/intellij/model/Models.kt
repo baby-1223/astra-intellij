@@ -30,6 +30,7 @@ data class AstraRequest(
     var formFields: MutableList<KeyValue> = mutableListOf(),
     var assertions: MutableList<String> = mutableListOf(),
     var preRequest: MutableList<String> = mutableListOf(),
+    var postResponse: MutableList<String> = mutableListOf(),
     var auth: AuthConfig = AuthConfig(),
 )
 
@@ -121,6 +122,7 @@ fun AstraRequest.normalize(): AstraRequest {
     if (formFields == null) formFields = mutableListOf()
     if (assertions == null) assertions = mutableListOf()
     if (preRequest == null) preRequest = mutableListOf()
+    if (postResponse == null) postResponse = mutableListOf()
     if (auth == null) auth = AuthConfig()
     return this
 }

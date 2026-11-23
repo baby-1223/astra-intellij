@@ -114,6 +114,76 @@ class PostmanServiceTest {
         assertEquals("Empty", environment.name)
     }
 
+    @Test
+    fun `round trips a zip data dump`() {
+        val collection = RequestCollection(
+            name = "Demo",
+            requests = mutableListOf(AstraRequest(name = "Ping", url = "https://api.test/ping")),
+        )
+        val environment = AstraEnvironment(name = "Dev", variables = mutableMapOf("baseUrl" to "https://api.test"))
+
+        val zip = service.exportDataDump(listOf(collection), listOf(environment))
+        val parsed = service.parseDataDump(zip)
+
+        assertEquals(1, parsed.collections.size)
+        assertEquals("Demo", parsed.collections.single().name)
+        assertEquals("Ping", parsed.collections.single().requests.single().name)
+        assertEquals(1, parsed.environments.size)
+        assertEquals("Dev", parsed.environments.single().name)
+        assertEquals("https://api.test", parsed.environments.single().variables["baseUrl"])
+    }
+
+    @Test
+    fun `imports and exports postman pre-request scripts`() {
+        val payload = """
+            {
+              "info": {"name": "Scripts"},
+              "item": [
+                {
+                  "name": "Login",
+                  "request": {"method": "POST", "url": "https://api.test/login"},
+                  "event": [
+                    {
+                      "listen": "prerequest",
+                      "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                          "pm.sendRequest('https://api.test/token', function (err, res) {",
+                          "  pm.environment.set('token', res.json().token);",
+                          "});"
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val collection = service.parseCollection(payload)
+        assertEquals(3, collection.requests.single().preRequest.size)
+        assertTrue(collection.requests.single().preRequest.first().startsWith("pm.sendRequest"))
+
+        val exported = service.parseCollection(service.exportCollection(listOf(collection), "Scripts"))
+        assertEquals(collection.requests.single().preRequest, exported.requests.single().preRequest)
+    }
+
+    @Test
+    fun `imports a json array of collections and environments`() {
+        val payload = """
+            [
+              {"info": {"name": "A"}, "item": [{"name": "Ping", "request": "https://api.test/ping"}]},
+              {"name": "E", "values": [{"key": "k", "value": "v"}]}
+            ]
+        """.trimIndent()
+
+        val parsed = service.parseDataDump(payload.toByteArray())
+
+        assertEquals("A", parsed.collections.single().name)
+        assertEquals("E", parsed.environments.single().name)
+        assertEquals("v", parsed.environments.single().variables["k"])
+    }
+
     private companion object {
         private val COLLECTION = """
             {

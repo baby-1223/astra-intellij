@@ -2,6 +2,7 @@ package com.astra.intellij.ui
 
 import com.astra.intellij.core.ArchiveService
 import com.astra.intellij.core.HttpClients
+import com.astra.intellij.core.InsomniaService
 import com.astra.intellij.core.OpenApiService
 import com.astra.intellij.core.PostmanService
 import com.astra.intellij.model.AstraRequest
@@ -55,10 +56,12 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     )
     private val sessions = mutableListOf<RequestSessionPanel>()
     private val postman = PostmanService()
+    private val insomnia = InsomniaService()
     private val openApi = OpenApiService()
     private val archive = ArchiveService()
     private val gson = Gson()
     private var refreshingEnvironments = false
+    private var syncingFromBus = false
 
     init {
         add(buildToolbar(), BorderLayout.NORTH)
@@ -67,11 +70,38 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             secondComponent = tabStrip
         }
         add(rootSplit, BorderLayout.CENTER)
+        subscribeToSharedWorkspace()
         refreshEnvironments()
         refreshTree()
         registerTabShortcuts()
         newRequest()
         installThemeListener()
+    }
+
+    /** Keeps every IDE window in sync with the single application-level workspace. */
+    private fun subscribeToSharedWorkspace() {
+        ApplicationManager.getApplication().messageBus.connect(this).subscribe(
+            WorkspaceService.TOPIC,
+            WorkspaceService.Listener { source ->
+                if (source !== this) SwingUtilities.invokeLater { reloadSharedWorkspace() }
+            },
+        )
+    }
+
+    private fun reloadSharedWorkspace() {
+        if (syncingFromBus) return
+        syncingFromBus = true
+        try {
+            refreshEnvironments()
+            refreshTree()
+            sessions.forEach { it.refreshHistory() }
+        } finally {
+            syncingFromBus = false
+        }
+    }
+
+    private fun notifySharedWorkspace() {
+        if (!syncingFromBus) workspace.notifyChanged(this)
     }
 
     /** Re-applies IDE theme colors when the user switches the appearance (light/dark). */
@@ -200,6 +230,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 showMenu(this, listOf(
                     "Postman Collection" to ::importPostmanCollection,
                     "Postman Environment" to ::importPostmanEnvironment,
+                    "Postman Data Dump (.zip)" to ::importPostmanDataDump,
+                    "Insomnia (.json)" to ::importInsomnia,
                     "OpenAPI / Swagger JSON" to ::importOpenApi,
                     "Astra Workspace (.json)" to ::importWorkspace,
                     "cURL Command" to { currentSession()?.importCurl() },
@@ -211,6 +243,9 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 showMenu(this, listOf(
                     "Postman Collection" to ::exportPostmanCollection,
                     "Postman Environment" to ::exportPostmanEnvironment,
+                    "Postman Data Dump (.zip)" to ::exportPostmanDataDump,
+                    "Insomnia Request (.json)" to ::exportInsomniaRequest,
+                    "Insomnia All (.json)" to ::exportInsomniaAll,
                     "OpenAPI 3.0 JSON" to ::exportOpenApi,
                     "Astra Workspace (.json)" to ::exportWorkspace,
                     "cURL to Clipboard" to { currentSession()?.exportCurl() },
@@ -607,6 +642,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         if (selectNode != null) {
             tree.selectionPath = javax.swing.tree.TreePath(selectNode!!.path)
         }
+        notifySharedWorkspace()
     }
 
     private fun addCollection() {
@@ -682,6 +718,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             refreshingEnvironments = false
         }
         workspace.data.activeEnvironmentId = environments[active].id
+        notifySharedWorkspace()
     }
 
     private fun importPostmanCollection() {
@@ -720,6 +757,76 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         } catch (error: Exception) {
             Messages.showErrorDialog(project, error.message ?: "Invalid Postman environment JSON", "Import failed")
         }
+    }
+
+    private fun importPostmanDataDump() {
+        val file = AstraFileChooser.open(
+            this,
+            "Import Postman Data Dump",
+            "Postman data dump or JSON",
+            "zip",
+            "json",
+        ) ?: return
+        val bytes = try {
+            Files.readAllBytes(file.toPath())
+        } catch (error: Exception) {
+            Messages.showErrorDialog(project, error.message ?: "Unable to read file", "Import failed")
+            return
+        }
+        try {
+            val imported = postman.parseDataDump(bytes)
+            if (imported.collections.isEmpty() && imported.environments.isEmpty()) {
+                Messages.showInfoMessage(project, "No collections or environments found in this file", "Import")
+                return
+            }
+            addImported(imported.collections, imported.environments)
+            notify(
+                "Imported ${imported.collections.size} collection(s), " +
+                    "${imported.environments.size} environment(s)",
+            )
+        } catch (error: Exception) {
+            Messages.showErrorDialog(project, error.message ?: "Invalid Postman data dump", "Import failed")
+        }
+    }
+
+    private fun importInsomnia() {
+        val file = chooseJsonFile("Import Insomnia") ?: return
+        val text = readFile(file) ?: return
+        try {
+            val imported = insomnia.parse(text)
+            if (imported.collections.isEmpty() && imported.environments.isEmpty()) {
+                Messages.showInfoMessage(project, "No requests or environments found in this file", "Import")
+                return
+            }
+            addImported(imported.collections, imported.environments)
+            notify(
+                "Imported ${imported.collections.size} collection(s), " +
+                    "${imported.environments.size} environment(s)",
+            )
+        } catch (error: Exception) {
+            Messages.showErrorDialog(project, error.message ?: "Invalid Insomnia JSON", "Import failed")
+        }
+    }
+
+    private fun addImported(
+        collections: List<RequestCollection>,
+        environments: List<com.astra.intellij.model.AstraEnvironment>,
+    ) {
+        collections.forEach { collection ->
+            collection.id = java.util.UUID.randomUUID().toString()
+            collection.name = uniqueCollectionName(collection.name)
+            workspace.data.collections.add(collection)
+        }
+        environments.forEach { environment ->
+            environment.id = java.util.UUID.randomUUID().toString()
+            environment.name = uniqueEnvironmentName(environment.name)
+            workspace.data.environments.add(environment)
+        }
+        if (environments.isNotEmpty()) {
+            workspace.data.activeEnvironmentId = environments.last().id
+        }
+        refreshEnvironments()
+        refreshTree(collections.firstOrNull()?.let { firstRequestOf(it) })
     }
 
     private fun importOpenApi() {
@@ -763,6 +870,77 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             "${sanitizeFileName(environment.name)}.postman_environment.json",
         ) ?: return
         writeFile(file, postman.exportEnvironment(environment))
+    }
+
+    private fun exportPostmanDataDump() {
+        if (workspace.data.collections.isEmpty() && workspace.data.environments.isEmpty()) {
+            Messages.showInfoMessage(project, "There is nothing to export", "Export")
+            return
+        }
+        val file = AstraFileChooser.save(
+            this,
+            "Export Postman Data Dump",
+            "postman-data-dump.zip",
+            "zip",
+        ) ?: return
+        writeBytes(file, postman.exportDataDump(workspace.data.collections, workspace.data.environments))
+    }
+
+    private fun exportInsomniaRequest() {
+        currentSession()?.commitEditor()
+        val request = (selectedNodeValue() as? AstraRequest) ?: currentSession()?.request
+        if (request == null) {
+            Messages.showInfoMessage(project, "Select a request to export", "Export")
+            return
+        }
+        val file = chooseSaveFile(
+            "Export Insomnia Request",
+            "${sanitizeFileName(request.name)}.insomnia.json",
+        ) ?: return
+        writeFile(
+            file,
+            insomnia.exportRequest(
+                request,
+                folderPathOf(request),
+                collectionNameOf(request),
+                workspace.activeEnvironment(),
+            ),
+        )
+    }
+
+    private fun exportInsomniaAll() {
+        if (workspace.data.collections.isEmpty()) {
+            Messages.showInfoMessage(project, "There is nothing to export", "Export")
+            return
+        }
+        val file = chooseSaveFile("Export Insomnia", "astra-insomnia.json") ?: return
+        writeFile(
+            file,
+            insomnia.exportAll(workspace.data.collections, workspace.data.environments, "Astra"),
+        )
+    }
+
+    private fun folderPathOf(request: AstraRequest): List<String> {
+        fun search(folders: List<RequestFolder>, path: List<String>): List<String>? {
+            folders.forEach { folder ->
+                val next = path + folder.name
+                if (folder.requests.any { it === request }) return next
+                search(folder.folders, next)?.let { return it }
+            }
+            return null
+        }
+        workspace.data.collections.forEach { collection ->
+            if (collection.requests.any { it === request }) return emptyList()
+            search(collection.folders, emptyList())?.let { return it }
+        }
+        return emptyList()
+    }
+
+    private fun collectionNameOf(request: AstraRequest): String {
+        workspace.data.collections.forEach { collection ->
+            if (collection.allRequests().any { it === request }) return collection.name
+        }
+        return "Astra"
     }
 
     private fun exportOpenApi() {
@@ -835,6 +1013,15 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private fun writeFile(file: File, content: String) {
         try {
             Files.writeString(file.toPath(), content)
+            notify("Exported to ${file.name}")
+        } catch (error: Exception) {
+            Messages.showErrorDialog(project, error.message ?: "Unable to write file", "Export failed")
+        }
+    }
+
+    private fun writeBytes(file: File, content: ByteArray) {
+        try {
+            Files.write(file.toPath(), content)
             notify("Exported to ${file.name}")
         } catch (error: Exception) {
             Messages.showErrorDialog(project, error.message ?: "Unable to write file", "Export failed")
