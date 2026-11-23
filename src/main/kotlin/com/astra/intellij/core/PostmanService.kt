@@ -51,7 +51,8 @@ class PostmanService {
             val value = element.asJsonObject
             val key = value.string("key") ?: return@forEach
             val enabled = value.get("enabled")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: true
-            if (enabled && key.isNotBlank()) {
+            val disabled = value.get("disabled")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false
+            if (enabled && !disabled && key.isNotBlank()) {
                 environment.variables[key] = value.string("value").orEmpty()
             }
         }
@@ -185,7 +186,8 @@ class PostmanService {
             val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
             val key = obj.string("key")?.takeIf { it.isNotBlank() } ?: return@forEach
             val enabled = obj.get("enabled")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: true
-            if (enabled) globals[key] = obj.string("value").orEmpty()
+            val disabled = obj.get("disabled")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false
+            if (enabled && !disabled) globals[key] = obj.string("value").orEmpty()
         }
         return PostmanDataDump(collections, environments, globals)
     }
@@ -201,34 +203,117 @@ class PostmanService {
             name = root.string("name")?.ifBlank { null } ?: "Imported Collection",
         )
         val foldersById = linkedMapOf<String, RequestFolder>()
-        val requestIds = mutableSetOf<String>()
+        val folderObjects = linkedMapOf<String, JsonObject>()
+        val parentOf = mutableMapOf<String, String>()
+        val orderOf = mutableMapOf<String, List<String>>()
+        val folderSourceIds = java.util.IdentityHashMap<RequestFolder, String>()
+        val requestSourceIds = java.util.IdentityHashMap<AstraRequest, String>()
+        val nestedRequestIds = mutableSetOf<String>()
 
-        fun registerFolders(folders: JsonArray?, parent: RequestFolder?) {
-            folders?.forEach { element ->
-                val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
-                val folder = RequestFolder(name = obj.string("name")?.ifBlank { null } ?: "Untitled")
-                obj.string("id")?.takeIf { it.isNotBlank() }?.let { foldersById[it] = folder }
-                if (parent != null) parent.folders.add(folder) else collection.folders.add(folder)
-                obj.array("requests")?.forEach { nested ->
-                    val requestObj = nested.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
-                    requestObj.string("id")?.takeIf { it.isNotBlank() }?.let { requestIds.add(it) }
-                    folder.requests.add(parseInternalRequest(requestObj))
+        fun readOrder(obj: JsonObject): List<String> =
+            obj.array("order")?.mapNotNull { element ->
+                element.takeIf { it.isJsonPrimitive }?.asString?.takeIf { it.isNotBlank() }
+            } ?: emptyList()
+
+        fun registerFolder(obj: JsonObject, nestedParentId: String?): RequestFolder {
+            val id = obj.string("id")?.takeIf { it.isNotBlank() }
+                ?: "folder-${foldersById.size}"
+            foldersById[id]?.let { return it }
+            val folder = RequestFolder(name = obj.string("name")?.ifBlank { null } ?: "Untitled")
+            foldersById[id] = folder
+            folderObjects[id] = obj
+            folderSourceIds[folder] = id
+            orderOf[id] = readOrder(obj)
+            if (nestedParentId != null) parentOf[id] = nestedParentId
+            obj.array("requests")?.forEach { element ->
+                val requestObj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+                val request = parseInternalRequest(requestObj)
+                requestObj.string("id")?.takeIf { it.isNotBlank() }?.let {
+                    nestedRequestIds.add(it)
+                    requestSourceIds[request] = it
                 }
-                registerFolders(obj.array("folders"), folder)
+                folder.requests.add(request)
+            }
+            obj.array("folders")?.forEach { element ->
+                val child = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+                registerFolder(child, id)
+            }
+            return folder
+        }
+
+        orderOf[""] = readOrder(root)
+        root.array("folders")?.forEach { element ->
+            val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            registerFolder(obj, null)
+        }
+
+        // Flat dumps can reference their parent instead of nesting the folder.
+        folderObjects.forEach { (id, obj) ->
+            val explicit = obj.string("folder")?.takeIf { it.isNotBlank() }
+                ?: obj.string("folderId")?.takeIf { it.isNotBlank() }
+            if (explicit != null) parentOf[id] = explicit
+        }
+        // Others only list a folder id inside another folder's "order".
+        orderOf.forEach { (parentId, ids) ->
+            if (parentId.isEmpty()) return@forEach
+            ids.forEach { childId ->
+                if (foldersById.containsKey(childId) && childId != parentId) {
+                    parentOf.putIfAbsent(childId, parentId)
+                }
             }
         }
-        registerFolders(root.array("folders"), null)
+
+        fun createsCycle(id: String, parentId: String): Boolean {
+            var current: String? = parentId
+            val seen = mutableSetOf<String>()
+            while (current != null && seen.add(current)) {
+                if (current == id) return true
+                current = parentOf[current]
+            }
+            return current != null
+        }
+
+        collection.folders.clear()
+        foldersById.values.forEach { it.folders.clear() }
+        foldersById.forEach { (id, folder) ->
+            val parent = parentOf[id]
+                ?.takeIf { it != id && foldersById.containsKey(it) && !createsCycle(id, it) }
+                ?.let { foldersById[it] }
+            if (parent != null) parent.folders.add(folder) else collection.folders.add(folder)
+        }
+
+        val orderOwner = mutableMapOf<String, String>()
+        orderOf.forEach { (parentId, ids) -> ids.forEach { orderOwner[it] = parentId } }
 
         root.array("requests")?.forEach { element ->
             val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
             val id = obj.string("id")?.takeIf { it.isNotBlank() }
-            if (id != null && !requestIds.add(id)) return@forEach
+            if (id != null && !nestedRequestIds.add(id)) return@forEach
             val request = parseInternalRequest(obj)
+            id?.let { requestSourceIds[request] = it }
             val folderId = obj.string("folder")?.takeIf { it.isNotBlank() }
                 ?: obj.string("folderId")?.takeIf { it.isNotBlank() }
+                ?: id?.let { orderOwner[it] }?.takeIf { foldersById.containsKey(it) }
             val folder = folderId?.let { foldersById[it] }
             if (folder != null) folder.requests.add(request) else collection.requests.add(request)
         }
+
+        fun sortChildren(parentId: String, folder: RequestFolder?) {
+            val rank = orderOf[parentId].orEmpty()
+                .withIndex()
+                .associate { it.value to it.index }
+            val requests = folder?.requests ?: collection.requests
+            val folders = folder?.folders ?: collection.folders
+            if (rank.isNotEmpty()) {
+                requests.sortBy { requestSourceIds[it]?.let { id -> rank[id] } ?: Int.MAX_VALUE }
+                folders.sortBy { folderSourceIds[it]?.let { id -> rank[id] } ?: Int.MAX_VALUE }
+            }
+            folders.toList().forEach { child ->
+                folderSourceIds[child]?.let { sortChildren(it, child) }
+            }
+        }
+        sortChildren("", null)
+
         return collection
     }
 
@@ -387,10 +472,10 @@ class PostmanService {
                     parseEvents(item.array("event"), parsed)
                     if (parent != null) parent.requests.add(parsed) else collection.requests.add(parsed)
                 }
-                children != null -> {
+                else -> {
                     val folder = RequestFolder(name = name)
                     if (parent != null) parent.folders.add(folder) else collection.folders.add(folder)
-                    parseItems(children, collection, folder)
+                    children?.let { parseItems(it, collection, folder) }
                 }
             }
         }

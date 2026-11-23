@@ -263,6 +263,38 @@ class PostmanServiceTest {
     }
 
     @Test
+    fun `legacy dump nests flat folders and uses order for membership`() {
+        val json = """
+            {
+              "version": 1,
+              "collections": [{
+                "name": "Flat",
+                "folders": [
+                  {"id": "f1", "name": "A", "order": ["f2", "r1"]},
+                  {"id": "f2", "name": "B", "folder": "f1", "order": ["r2"]}
+                ],
+                "requests": [
+                  {"id": "r1", "name": "One", "method": "GET", "url": "https://x/1", "headers": ""},
+                  {"id": "r2", "name": "Two", "method": "GET", "url": "https://x/2", "headers": ""},
+                  {"id": "r3", "name": "Root", "method": "GET", "url": "https://x/3", "headers": ""}
+                ],
+                "order": ["f1", "r3"]
+              }]
+            }
+        """.trimIndent()
+
+        val collection = service.parseDataDump(json.toByteArray()).collections.single()
+
+        val a = collection.folders.single()
+        assertEquals("A", a.name)
+        val b = a.folders.single()
+        assertEquals("B", b.name)
+        assertEquals(listOf("One"), a.requests.map { it.name })
+        assertEquals(listOf("Two"), b.requests.map { it.name })
+        assertEquals(listOf("Root"), collection.requests.map { it.name })
+    }
+
+    @Test
     fun `unrelated json in a dump does not create an empty collection`() {
         val parsed = service.parseDataDump("""{"version":1,"workspaces":[{"name":"Team"}]}""".toByteArray())
 
