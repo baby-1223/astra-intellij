@@ -45,7 +45,15 @@ class PostmanService {
             variables = variables.values,
             disabledVariables = variables.disabled,
         )
-        root.array("item")?.let { parseItems(it, collection, null) }
+        root.array("item")?.let {
+            parseItems(
+                it,
+                collection,
+                null,
+                parseAuthConfig(root.obj("auth")),
+                eventScript(root.array("event"), "prerequest"),
+            )
+        }
         return collection
     }
 
@@ -160,6 +168,7 @@ class PostmanService {
                         environments.addAll(dump.environments)
                         globals.putAll(dump.globals)
                     }
+                    isGlobals(obj) -> globals.putAll(parseGlobals(obj))
                     isEnvironment(obj) -> parseEnvironment(obj)?.let { environments.add(it) }
                     isCollection(obj) -> collections.add(parseCollection(obj))
                     isInternalCollection(obj) -> collections.add(parseInternalCollection(obj))
@@ -170,6 +179,7 @@ class PostmanService {
         val root = JsonParser.parseString(text).asJsonObject
         return when {
             isDump(root) -> parseDump(root)
+            isGlobals(root) -> PostmanDataDump(globals = parseGlobals(root))
             isEnvironment(root) -> PostmanDataDump(environments = listOfNotNull(parseEnvironment(root)))
             isCollection(root) -> PostmanDataDump(collections = listOf(parseCollection(root)))
             isInternalCollection(root) -> PostmanDataDump(collections = listOf(parseInternalCollection(root)))
@@ -178,8 +188,16 @@ class PostmanService {
     }
 
     private fun isEnvironment(root: JsonObject): Boolean =
-        root.array("values") != null &&
+        root.string("_postman_variable_scope") != "globals" &&
+            root.array("values") != null &&
             (root.string("_postman_variable_scope") == "environment" || !root.has("item"))
+
+    /** A globals file exported in a data dump carries values but must not become an environment. */
+    private fun isGlobals(root: JsonObject): Boolean =
+        root.string("_postman_variable_scope") == "globals" && root.array("values") != null
+
+    private fun parseGlobals(root: JsonObject): Map<String, String> =
+        readVariables(root.array("values")).toMap()
 
     /** A data dump wraps collections and environments in top-level arrays. */
     private fun isDump(root: JsonObject): Boolean =
@@ -358,6 +376,10 @@ class PostmanService {
         obj.string("preRequestScript")?.takeIf { it.isNotBlank() }?.let { script ->
             request.preRequest = script.lines().toMutableList()
         }
+        if (request.preRequest.isEmpty()) {
+            val script = eventScript(obj.array("events"), "prerequest")
+            if (script.isNotEmpty()) request.preRequest = script.toMutableList()
+        }
         return request
     }
 
@@ -396,7 +418,7 @@ class PostmanService {
                         ?: return@mapNotNull null
                     val enabled = entry.get("enabled")
                         ?.takeIf { it.isJsonPrimitive }?.asBoolean ?: true
-                    if (!enabled) return@mapNotNull null
+                    if (!enabled || entry.string("type") == "file") return@mapNotNull null
                     entry.string("key")?.let { "$it=${entry.string("value").orEmpty()}" }
                 }.orEmpty()
                 if (pairs.isNotEmpty()) {
@@ -503,7 +525,13 @@ class PostmanService {
         })
     }
 
-    private fun parseItems(items: JsonArray, collection: RequestCollection, parent: RequestFolder?) {
+    private fun parseItems(
+        items: JsonArray,
+        collection: RequestCollection,
+        parent: RequestFolder?,
+        inheritedAuth: AuthConfig? = null,
+        inheritedScript: List<String> = emptyList(),
+    ) {
         items.forEach { element ->
             val item = element.asJsonObject
             val name = item.string("name")?.ifBlank { null } ?: "Untitled"
@@ -511,8 +539,9 @@ class PostmanService {
             val children = item.array("item")
             when {
                 request != null && !request.isJsonNull -> {
-                    val parsed = parseRequest(name, request)
-                    parseEvents(item.array("event"), parsed)
+                    val parsed = parseRequest(name, request, inheritedAuth)
+                    val script = inheritedScript + eventScript(item.array("event"), "prerequest")
+                    if (script.isNotEmpty()) parsed.preRequest = script.toMutableList()
                     if (parent != null) parent.requests.add(parsed) else collection.requests.add(parsed)
                 }
                 else -> {
@@ -523,13 +552,25 @@ class PostmanService {
                         disabledVariables = folderVariables.disabled,
                     )
                     if (parent != null) parent.folders.add(folder) else collection.folders.add(folder)
-                    children?.let { parseItems(it, collection, folder) }
+                    children?.let {
+                        parseItems(
+                            it,
+                            collection,
+                            folder,
+                            parseAuthConfig(item.obj("auth")) ?: inheritedAuth,
+                            inheritedScript + eventScript(item.array("event"), "prerequest"),
+                        )
+                    }
                 }
             }
         }
     }
 
-    private fun parseRequest(name: String, element: JsonElement): AstraRequest {
+    private fun parseRequest(
+        name: String,
+        element: JsonElement,
+        inheritedAuth: AuthConfig? = null,
+    ): AstraRequest {
         val request = AstraRequest(name = name)
         if (element.isJsonPrimitive) {
             request.url = element.asString
@@ -541,19 +582,22 @@ class PostmanService {
         parseHeaders(obj.array("header"), request)
         parseBody(obj.obj("body"), request)
         parseAuth(obj.obj("auth"), request)
+        if (request.auth.type == "none" && inheritedAuth != null) {
+            request.auth = inheritedAuth.copy()
+        }
         return request
     }
 
     /** Imports the "prerequest" event script so Postman scripts keep working after the import. */
-    private fun parseEvents(events: JsonArray?, request: AstraRequest) {
+    private fun eventScript(events: JsonArray?, listen: String): List<String> {
+        val lines = mutableListOf<String>()
         events?.forEach { element ->
             val event = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
-            if (event.string("listen") != "prerequest") return@forEach
-            val exec = event.obj("script")?.array("exec")?.mapNotNull { line ->
-                if (line.isJsonPrimitive) line.asString else null
-            } ?: return@forEach
-            if (exec.isNotEmpty()) request.preRequest = exec.toMutableList()
+            if (event.string("listen") != listen) return@forEach
+            val exec = event.obj("script")?.array("exec") ?: return@forEach
+            lines.addAll(exec.mapNotNull { if (it.isJsonPrimitive) it.asString else null })
         }
+        return lines
     }
 
     private fun parseUrl(element: JsonElement?, request: AstraRequest) {
@@ -628,7 +672,8 @@ class PostmanService {
                 val pairs = body.array("formdata")?.mapNotNull { element ->
                     val entry = element.asJsonObject
                     val disabled = entry.get("disabled")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false
-                    if (disabled) null else entry.string("key")?.let { "$it=${entry.string("value").orEmpty()}" }
+                    if (disabled || entry.string("type") == "file") return@mapNotNull null
+                    entry.string("key")?.let { "$it=${entry.string("value").orEmpty()}" }
                 }.orEmpty()
                 request.body = pairs.joinToString("&")
                 request.bodyMode = "text"
@@ -652,23 +697,27 @@ class PostmanService {
     }
 
     private fun parseAuth(auth: JsonObject?, request: AstraRequest) {
-        when (auth?.string("type")) {
-            "bearer" -> request.auth = AuthConfig(
-                type = "bearer",
-                token = authValue(auth, "bearer", "token"),
-            )
-            "basic" -> request.auth = AuthConfig(
-                type = "basic",
-                username = authValue(auth, "basic", "username"),
-                password = authValue(auth, "basic", "password"),
-            )
-            "apikey" -> request.auth = AuthConfig(
-                type = "apikey",
-                apiKeyName = authValue(auth, "apikey", "key"),
-                apiKeyValue = authValue(auth, "apikey", "value"),
-                apiKeyIn = authValue(auth, "apikey", "in").ifBlank { "header" },
-            )
-        }
+        parseAuthConfig(auth)?.let { request.auth = it }
+    }
+
+    /** Returns null for "none"/"inherit" and for auth types Astra cannot apply. */
+    private fun parseAuthConfig(auth: JsonObject?): AuthConfig? = when (auth?.string("type")) {
+        "bearer" -> AuthConfig(
+            type = "bearer",
+            token = authValue(auth, "bearer", "token"),
+        )
+        "basic" -> AuthConfig(
+            type = "basic",
+            username = authValue(auth, "basic", "username"),
+            password = authValue(auth, "basic", "password"),
+        )
+        "apikey" -> AuthConfig(
+            type = "apikey",
+            apiKeyName = authValue(auth, "apikey", "key"),
+            apiKeyValue = authValue(auth, "apikey", "value"),
+            apiKeyIn = authValue(auth, "apikey", "in").ifBlank { "header" },
+        )
+        else -> null
     }
 
     private fun authValue(auth: JsonObject, section: String, key: String): String =

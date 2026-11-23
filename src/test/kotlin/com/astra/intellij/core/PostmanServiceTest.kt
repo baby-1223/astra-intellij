@@ -343,6 +343,111 @@ class PostmanServiceTest {
     }
 
     @Test
+    fun `globals file inside a zip is not imported as an environment`() {
+        val collection = """
+            {"info":{"name":"Team","schema":"https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},"item":[]}
+        """.trimIndent()
+        val environment = """
+            {"name":"Dev","_postman_variable_scope":"environment","values":[{"key":"baseUrl","value":"https://api.test","enabled":true}]}
+        """.trimIndent()
+        val globals = """
+            {"_postman_variable_scope":"globals","values":[{"key":"g","value":"1","enabled":true}]}
+        """.trimIndent()
+
+        val output = java.io.ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(output).use { zip ->
+            listOf(
+                "collections/Team.postman_collection.json" to collection,
+                "environments/Dev.postman_environment.json" to environment,
+                "globals/globals.postman_globals.json" to globals,
+            ).forEach { (name, content) ->
+                zip.putNextEntry(java.util.zip.ZipEntry(name))
+                zip.write(content.toByteArray())
+                zip.closeEntry()
+            }
+        }
+
+        val parsed = service.parseDataDump(output.toByteArray())
+
+        assertEquals(1, parsed.collections.size)
+        assertEquals(listOf("Dev"), parsed.environments.map { it.name })
+        assertEquals(mapOf("g" to "1"), parsed.globals)
+    }
+
+    @Test
+    fun `requests inherit collection and folder auth and pre-request scripts`() {
+        val json = """
+            {
+              "info": {"name": "Scoped", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+              "auth": {"type": "basic", "basic": [
+                {"key": "username", "value": "root"}, {"key": "password", "value": "pw"}
+              ]},
+              "event": [{"listen": "prerequest", "script": {"exec": ["pm.variables.set('c','1');"]}}],
+              "item": [
+                {
+                  "name": "Folder",
+                  "auth": {"type": "bearer", "bearer": [{"key": "token", "value": "ft"}]},
+                  "event": [{"listen": "prerequest", "script": {"exec": ["pm.variables.set('f','1');"]}}],
+                  "item": [
+                    {"name": "Inherited", "request": {"method": "GET", "url": "https://x/1"}},
+                    {"name": "Own", "request": {"method": "GET", "url": "https://x/2",
+                      "auth": {"type": "apikey", "apikey": [
+                        {"key": "key", "value": "k"}, {"key": "value", "value": "v"}, {"key": "in", "value": "header"}
+                      ]}}}
+                  ]
+                },
+                {"name": "Root", "request": {"method": "GET", "url": "https://x/3"}}
+              ]
+            }
+        """.trimIndent()
+
+        val collection = service.parseDataDump(json.toByteArray()).collections.single()
+        val folder = collection.folders.single()
+        val inherited = folder.requests.first { it.name == "Inherited" }
+        val own = folder.requests.first { it.name == "Own" }
+        val root = collection.requests.single()
+
+        assertEquals("bearer", inherited.auth.type)
+        assertEquals("ft", inherited.auth.token)
+        assertEquals(
+            listOf("pm.variables.set('c','1');", "pm.variables.set('f','1');"),
+            inherited.preRequest,
+        )
+        assertEquals("apikey", own.auth.type)
+        assertEquals("k", own.auth.apiKeyName)
+        assertEquals("basic", root.auth.type)
+        assertEquals("root", root.auth.username)
+        assertEquals(listOf("pm.variables.set('c','1');"), root.preRequest)
+    }
+
+    @Test
+    fun `file entries in formdata are skipped`() {
+        val json = """
+            {
+              "info": {"name": "Upload", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+              "item": [{
+                "name": "Upload",
+                "request": {
+                  "method": "POST",
+                  "url": "https://x/upload",
+                  "body": {
+                    "mode": "formdata",
+                    "formdata": [
+                      {"key": "file", "type": "file", "src": "/tmp/a.txt"},
+                      {"key": "name", "type": "text", "value": "astra"}
+                    ]
+                  }
+                }
+              }]
+            }
+        """.trimIndent()
+
+        val request = service.parseDataDump(json.toByteArray()).collections.single().requests.single()
+
+        assertEquals("name=astra", request.body)
+    }
+
+    @Test
     fun `legacy dump keeps collection and folder variables`() {
         val json = """
             {
