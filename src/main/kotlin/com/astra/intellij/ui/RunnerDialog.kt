@@ -483,7 +483,14 @@ class RunnerDialog(
         val environment = workspace.data.environments.firstOrNull { it.id == workspace.data.activeEnvironmentId }
         val settings = workspace.data.settings
         Thread {
-            runner.run(requests, baseVars, environment, settings, config) { iteration, index, result ->
+            runner.run(
+                requests,
+                baseVars,
+                environment,
+                settings,
+                config,
+                { workspace.scopedVariables(it) },
+            ) { iteration, index, result ->
                 ApplicationManager.getApplication().invokeLater({
                     addResultRow(iteration, index, result, planned)
                 }, ModalityState.any())

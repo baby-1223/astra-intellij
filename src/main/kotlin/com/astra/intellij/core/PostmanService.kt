@@ -40,23 +40,30 @@ class PostmanService {
     private fun parseCollection(root: JsonObject): RequestCollection {
         val info = root.obj("info")
         val collection = RequestCollection(name = info?.string("name")?.ifBlank { null } ?: "Imported Collection")
+        collection.variables = readVariables(root.array("variable"))
         root.array("item")?.let { parseItems(it, collection, null) }
         return collection
     }
 
-    private fun parseEnvironment(root: JsonObject): AstraEnvironment? {
-        val values = root.array("values") ?: return null
-        val environment = AstraEnvironment(name = root.string("name")?.ifBlank { null } ?: "Imported Environment")
-        values.forEach { element ->
-            val value = element.asJsonObject
-            val key = value.string("key") ?: return@forEach
+    /** Reads Postman "key/value/enabled" variable arrays (collection, folder, environment). */
+    private fun readVariables(values: JsonArray?): MutableMap<String, String> {
+        val result = linkedMapOf<String, String>()
+        values?.forEach { element ->
+            val value = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            val key = value.string("key")?.takeIf { it.isNotBlank() } ?: return@forEach
             val enabled = value.get("enabled")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: true
             val disabled = value.get("disabled")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false
-            if (enabled && !disabled && key.isNotBlank()) {
-                environment.variables[key] = value.string("value").orEmpty()
-            }
+            if (enabled && !disabled) result[key] = value.string("value").orEmpty()
         }
-        return environment
+        return result
+    }
+
+    private fun parseEnvironment(root: JsonObject): AstraEnvironment? {
+        val values = root.array("values") ?: return null
+        return AstraEnvironment(
+            name = root.string("name")?.ifBlank { null } ?: "Imported Environment",
+            variables = readVariables(values),
+        )
     }
 
     /**
@@ -201,6 +208,7 @@ class PostmanService {
     private fun parseInternalCollection(root: JsonObject): RequestCollection {
         val collection = RequestCollection(
             name = root.string("name")?.ifBlank { null } ?: "Imported Collection",
+            variables = readVariables(root.array("variable")),
         )
         val foldersById = linkedMapOf<String, RequestFolder>()
         val folderObjects = linkedMapOf<String, JsonObject>()
@@ -219,7 +227,10 @@ class PostmanService {
             val id = obj.string("id")?.takeIf { it.isNotBlank() }
                 ?: "folder-${foldersById.size}"
             foldersById[id]?.let { return it }
-            val folder = RequestFolder(name = obj.string("name")?.ifBlank { null } ?: "Untitled")
+            val folder = RequestFolder(
+                name = obj.string("name")?.ifBlank { null } ?: "Untitled",
+                variables = readVariables(obj.array("variable")),
+            )
             foldersById[id] = folder
             folderObjects[id] = obj
             folderSourceIds[folder] = id
@@ -425,6 +436,9 @@ class PostmanService {
                 })
             }
         }
+        if (collections.size == 1) {
+            root.add("variable", variablesJson(collections.first().variables))
+        }
         root.add("item", items)
         return gson.toJson(root)
     }
@@ -434,17 +448,19 @@ class PostmanService {
         root.addProperty("id", environment.id)
         root.addProperty("name", environment.name)
         root.addProperty("_postman_variable_scope", "environment")
-        root.add("values", JsonArray().apply {
-            environment.variables.forEach { (key, value) ->
-                add(JsonObject().apply {
-                    addProperty("key", key)
-                    addProperty("value", value)
-                    addProperty("type", "default")
-                    addProperty("enabled", true)
-                })
-            }
-        })
+        root.add("values", variablesJson(environment.variables))
         return gson.toJson(root)
+    }
+
+    private fun variablesJson(variables: Map<String, String>): JsonArray = JsonArray().apply {
+        variables.forEach { (key, value) ->
+            add(JsonObject().apply {
+                addProperty("key", key)
+                addProperty("value", value)
+                addProperty("type", "default")
+                addProperty("enabled", true)
+            })
+        }
     }
 
     private fun appendCollectionItems(collection: RequestCollection, items: JsonArray) {
@@ -454,6 +470,7 @@ class PostmanService {
 
     private fun folderJson(folder: RequestFolder): JsonObject = JsonObject().apply {
         addProperty("name", folder.name)
+        add("variable", variablesJson(folder.variables))
         add("item", JsonArray().also { array ->
             folder.requests.forEach { array.add(requestJson(it)) }
             folder.folders.forEach { array.add(folderJson(it)) }
@@ -473,7 +490,10 @@ class PostmanService {
                     if (parent != null) parent.requests.add(parsed) else collection.requests.add(parsed)
                 }
                 else -> {
-                    val folder = RequestFolder(name = name)
+                    val folder = RequestFolder(
+                        name = name,
+                        variables = readVariables(item.array("variable")),
+                    )
                     if (parent != null) parent.folders.add(folder) else collection.folders.add(folder)
                     children?.let { parseItems(it, collection, folder) }
                 }

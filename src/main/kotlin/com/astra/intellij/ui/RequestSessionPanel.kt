@@ -127,7 +127,7 @@ class RequestSessionPanel(
 
     fun exportCurl() {
         commitEditor()
-        val text = curl.export(request, workspace.activeVariables())
+        val text = curl.export(request, workspace.variablesFor(request))
         Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
         response.showMessage("cURL copied to clipboard")
     }
@@ -173,7 +173,7 @@ class RequestSessionPanel(
         val snapshot = deepCopy(request)
         val settings = workspace.data.settings
         val environment = workspace.data.environments.firstOrNull { it.id == workspace.data.activeEnvironmentId }
-        val baseVars = workspace.activeVariables()
+        val baseVars = workspace.variablesFor(request)
         preparingPreRequest = true
         cancelPreparing = false
         ApplicationManager.getApplication().executeOnPooledThread {

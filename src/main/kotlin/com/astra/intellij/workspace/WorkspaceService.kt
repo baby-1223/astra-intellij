@@ -1,8 +1,11 @@
 package com.astra.intellij.workspace
 
 import com.astra.intellij.model.AstraEnvironment
+import com.astra.intellij.model.AstraRequest
 import com.astra.intellij.model.RequestFolder
 import com.astra.intellij.model.WorkspaceData
+import com.astra.intellij.model.containsRequest
+import com.astra.intellij.model.folderPathTo
 import com.astra.intellij.model.normalize
 import com.google.gson.Gson
 import com.intellij.openapi.application.ApplicationManager
@@ -74,6 +77,23 @@ class WorkspaceService : PersistentStateComponent<WorkspaceService.State> {
 
     fun activeEnvironment(): AstraEnvironment =
         data.environments.firstOrNull { it.id == data.activeEnvironmentId } ?: data.environments.first()
+
+    /** Variables declared on the collection and its folder chain for [request]. */
+    fun scopedVariables(request: AstraRequest?): Map<String, String> {
+        if (request == null) return emptyMap()
+        val collection = data.collections.firstOrNull { it.containsRequest(request) } ?: return emptyMap()
+        val merged = LinkedHashMap<String, String>(collection.variables)
+        collection.folderPathTo(request)?.forEach { merged.putAll(it.variables) }
+        return merged
+    }
+
+    /** Postman precedence: globals < collection < folder < environment. */
+    fun variablesFor(request: AstraRequest?): Map<String, String> {
+        val merged = LinkedHashMap<String, String>(data.globals)
+        merged.putAll(scopedVariables(request))
+        merged.putAll(activeEnvironment().variables)
+        return merged
+    }
 
     /** Tells other windows that the shared workspace changed. */
     fun notifyChanged(source: Any?) {

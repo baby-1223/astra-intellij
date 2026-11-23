@@ -47,7 +47,7 @@ class CollectionRunner(
         settings: AstraSettings,
         onResult: (index: Int, result: RunItemResult) -> Unit,
     ) {
-        run(requests, baseVars, environment, settings, RunnerConfig()) { _, index, result ->
+        run(requests, baseVars, environment, settings, RunnerConfig(), { emptyMap() }) { _, index, result ->
             onResult(index, result)
         }
     }
@@ -59,6 +59,7 @@ class CollectionRunner(
         environment: AstraEnvironment?,
         settings: AstraSettings,
         config: RunnerConfig,
+        scopeVariables: (AstraRequest) -> Map<String, String> = { emptyMap() },
         onResult: (iteration: Int, index: Int, result: RunItemResult) -> Unit,
     ) {
         cancelled = false
@@ -72,7 +73,8 @@ class CollectionRunner(
                 if (cancelled) return
                 // Overlay fresh environment values so post-response captures are visible to
                 // the following requests in the same run.
-                val vars = (baseVars + environment?.variables.orEmpty() + dataRow).toMutableMap()
+                val vars = (scopeVariables(request) + baseVars +
+                    environment?.variables.orEmpty() + dataRow).toMutableMap()
                 // Pre-request scripts may modify pm.request; work on a copy so the collection
                 // definition stays untouched between runs.
                 val working = request.copy(

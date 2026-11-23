@@ -39,6 +39,7 @@ data class RequestFolder(
     var name: String = "",
     var requests: MutableList<AstraRequest> = mutableListOf(),
     var folders: MutableList<RequestFolder> = mutableListOf(),
+    var variables: MutableMap<String, String> = mutableMapOf(),
 )
 
 data class RequestCollection(
@@ -46,7 +47,28 @@ data class RequestCollection(
     var name: String = "",
     var folders: MutableList<RequestFolder> = mutableListOf(),
     var requests: MutableList<AstraRequest> = mutableListOf(),
+    var variables: MutableMap<String, String> = mutableMapOf(),
 )
+
+/** True when this collection or any of its folders owns [request] (identity comparison). */
+fun RequestCollection.containsRequest(request: AstraRequest): Boolean =
+    requests.any { it === request } || folders.any { it.containsRequest(request) }
+
+fun RequestFolder.containsRequest(request: AstraRequest): Boolean =
+    requests.any { it === request } || folders.any { it.containsRequest(request) }
+
+/** Folder chain from the collection root down to the folder owning [request], or null. */
+fun RequestCollection.folderPathTo(request: AstraRequest): List<RequestFolder>? {
+    fun walk(folders: List<RequestFolder>, path: List<RequestFolder>): List<RequestFolder>? {
+        for (folder in folders) {
+            val next = path + folder
+            if (folder.requests.any { it === request }) return next
+            walk(folder.folders, next)?.let { return it }
+        }
+        return null
+    }
+    return if (requests.any { it === request }) emptyList() else walk(folders, emptyList())
+}
 
 data class AstraEnvironment(
     var id: String = UUID.randomUUID().toString(),
@@ -135,12 +157,14 @@ fun WorkspaceData.normalize(): WorkspaceData {
         if (collection.name == null) collection.name = "Collection"
         if (collection.requests == null) collection.requests = mutableListOf()
         if (collection.folders == null) collection.folders = mutableListOf()
+        if (collection.variables == null) collection.variables = mutableMapOf()
         collection.requests.forEach { it.normalize() }
         fun normalizeFolder(folder: RequestFolder) {
             if (folder.id.isNullOrEmpty()) folder.id = java.util.UUID.randomUUID().toString()
             if (folder.name == null) folder.name = "Folder"
             if (folder.requests == null) folder.requests = mutableListOf()
             if (folder.folders == null) folder.folders = mutableListOf()
+            if (folder.variables == null) folder.variables = mutableMapOf()
             folder.requests.forEach { it.normalize() }
             folder.folders.forEach { normalizeFolder(it) }
         }

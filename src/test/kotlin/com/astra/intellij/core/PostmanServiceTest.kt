@@ -6,6 +6,8 @@ import com.astra.intellij.model.AuthConfig
 import com.astra.intellij.model.KeyValue
 import com.astra.intellij.model.RequestCollection
 import com.astra.intellij.model.RequestFolder
+import com.astra.intellij.model.containsRequest
+import com.astra.intellij.model.folderPathTo
 import com.google.gson.JsonParser
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -300,6 +302,66 @@ class PostmanServiceTest {
 
         assertTrue(parsed.collections.isEmpty())
         assertTrue(parsed.environments.isEmpty())
+    }
+
+    @Test
+    fun `collection and folder variables are imported and exported`() {
+        val json = """
+            {
+              "info": {"name": "Scoped", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+              "variable": [
+                {"key": "baseUrl", "value": "https://api.test", "enabled": true},
+                {"key": "off", "value": "x", "enabled": false}
+              ],
+              "item": [
+                {
+                  "name": "Auth",
+                  "variable": [{"key": "token", "value": "t1", "enabled": true}],
+                  "item": [
+                    {"name": "Login", "request": {"method": "GET", "url": "{{baseUrl}}/login"}}
+                  ]
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val collection = service.parseDataDump(json.toByteArray()).collections.single()
+        assertEquals("https://api.test", collection.variables["baseUrl"])
+        assertFalse(collection.variables.containsKey("off"))
+        val folder = collection.folders.single()
+        assertEquals("t1", folder.variables["token"])
+        val request = folder.requests.single()
+        assertTrue(collection.containsRequest(request))
+        assertEquals(listOf(folder), collection.folderPathTo(request))
+
+        val exported = service.exportCollection(listOf(collection), collection.name)
+        val reparsed = service.parseDataDump(exported.toByteArray()).collections.single()
+        assertEquals(collection.variables, reparsed.variables)
+        assertEquals("t1", reparsed.folders.single().variables["token"])
+    }
+
+    @Test
+    fun `legacy dump keeps collection and folder variables`() {
+        val json = """
+            {
+              "version": 1,
+              "collections": [{
+                "name": "Scoped",
+                "variable": [{"key": "team", "value": "astra"}],
+                "folders": [{
+                  "id": "f1",
+                  "name": "Auth",
+                  "variable": [{"key": "token", "value": "t1"}],
+                  "requests": []
+                }],
+                "requests": []
+              }]
+            }
+        """.trimIndent()
+
+        val collection = service.parseDataDump(json.toByteArray()).collections.single()
+        assertEquals("astra", collection.variables["team"])
+        assertEquals("t1", collection.folders.single().variables["token"])
     }
 
     private companion object {
