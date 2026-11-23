@@ -5,8 +5,8 @@ import com.astra.intellij.model.AstraRequest
 import com.astra.intellij.model.RequestFolder
 import com.astra.intellij.model.WorkspaceData
 import com.astra.intellij.model.containsRequest
-import com.astra.intellij.model.folderPathTo
 import com.astra.intellij.model.normalize
+import com.astra.intellij.model.resolveVariables
 import com.google.gson.Gson
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.PersistentStateComponent
@@ -79,28 +79,19 @@ class WorkspaceService : PersistentStateComponent<WorkspaceService.State> {
         data.environments.firstOrNull { it.id == data.activeEnvironmentId } ?: data.environments.first()
 
     /** Variables declared on the collection and its folder chain for [request]. */
-    fun scopedVariables(request: AstraRequest?): Map<String, String> {
-        if (request == null) return emptyMap()
-        val collection = data.collections.firstOrNull { it.containsRequest(request) } ?: return emptyMap()
-        val merged = LinkedHashMap<String, String>()
-        collection.variables.forEach { (key, value) ->
-            if (key !in collection.disabledVariables) merged[key] = value
-        }
-        collection.folderPathTo(request)?.forEach { folder ->
-            folder.variables.forEach { (key, value) ->
-                if (key !in folder.disabledVariables) merged[key] = value
-            }
-        }
-        return merged
-    }
+    fun scopedVariables(request: AstraRequest?): Map<String, String> =
+        resolveVariables(request, collectionOf(request))
 
     /** Postman precedence: globals < collection < folder < environment. */
-    fun variablesFor(request: AstraRequest?): Map<String, String> {
-        val merged = LinkedHashMap<String, String>(data.globals)
-        merged.putAll(scopedVariables(request))
-        merged.putAll(activeEnvironment().variables)
-        return merged
-    }
+    fun variablesFor(request: AstraRequest?): Map<String, String> = resolveVariables(
+        request,
+        collectionOf(request),
+        data.globals,
+        activeEnvironment().variables,
+    )
+
+    private fun collectionOf(request: AstraRequest?) =
+        request?.let { target -> data.collections.firstOrNull { it.containsRequest(target) } }
 
     /** Tells other windows that the shared workspace changed. */
     fun notifyChanged(source: Any?) {

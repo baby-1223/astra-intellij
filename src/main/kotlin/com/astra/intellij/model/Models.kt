@@ -72,6 +72,31 @@ fun RequestCollection.folderPathTo(request: AstraRequest): List<RequestFolder>? 
     return if (requests.any { it === request }) emptyList() else walk(folders, emptyList())
 }
 
+/**
+ * Resolves variables with Postman precedence: globals < collection < folder chain < environment.
+ * Disabled collection/folder variables are skipped.
+ */
+fun resolveVariables(
+    request: AstraRequest?,
+    collection: RequestCollection?,
+    globals: Map<String, String> = emptyMap(),
+    environment: Map<String, String> = emptyMap(),
+): Map<String, String> {
+    val merged = LinkedHashMap<String, String>(globals)
+    if (request != null && collection != null) {
+        collection.variables.forEach { (key, value) ->
+            if (key !in collection.disabledVariables) merged[key] = value
+        }
+        collection.folderPathTo(request)?.forEach { folder ->
+            folder.variables.forEach { (key, value) ->
+                if (key !in folder.disabledVariables) merged[key] = value
+            }
+        }
+    }
+    merged.putAll(environment)
+    return merged
+}
+
 data class AstraEnvironment(
     var id: String = UUID.randomUUID().toString(),
     var name: String = "",
