@@ -190,32 +190,46 @@ class PostmanService {
         return PostmanDataDump(collections, environments, globals)
     }
 
-    /** Imports a legacy data-dump collection, including nested folders and requests. */
+    /**
+     * Imports a legacy data-dump collection.
+     *
+     * Data dumps may nest requests inside folders, but they can also keep every request at the
+     * collection root and reference its folder through a "folder" id. Both shapes are supported.
+     */
     private fun parseInternalCollection(root: JsonObject): RequestCollection {
         val collection = RequestCollection(
             name = root.string("name")?.ifBlank { null } ?: "Imported Collection",
         )
-        parseInternalItems(root.array("requests"), root.array("folders"), collection, null)
-        return collection
-    }
+        val foldersById = linkedMapOf<String, RequestFolder>()
+        val requestIds = mutableSetOf<String>()
 
-    private fun parseInternalItems(
-        requests: JsonArray?,
-        folders: JsonArray?,
-        collection: RequestCollection,
-        parent: RequestFolder?,
-    ) {
-        folders?.forEach { element ->
-            val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
-            val folder = RequestFolder(name = obj.string("name")?.ifBlank { null } ?: "Untitled")
-            if (parent != null) parent.folders.add(folder) else collection.folders.add(folder)
-            parseInternalItems(obj.array("requests"), obj.array("folders"), collection, folder)
+        fun registerFolders(folders: JsonArray?, parent: RequestFolder?) {
+            folders?.forEach { element ->
+                val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+                val folder = RequestFolder(name = obj.string("name")?.ifBlank { null } ?: "Untitled")
+                obj.string("id")?.takeIf { it.isNotBlank() }?.let { foldersById[it] = folder }
+                if (parent != null) parent.folders.add(folder) else collection.folders.add(folder)
+                obj.array("requests")?.forEach { nested ->
+                    val requestObj = nested.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+                    requestObj.string("id")?.takeIf { it.isNotBlank() }?.let { requestIds.add(it) }
+                    folder.requests.add(parseInternalRequest(requestObj))
+                }
+                registerFolders(obj.array("folders"), folder)
+            }
         }
-        requests?.forEach { element ->
+        registerFolders(root.array("folders"), null)
+
+        root.array("requests")?.forEach { element ->
             val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            val id = obj.string("id")?.takeIf { it.isNotBlank() }
+            if (id != null && !requestIds.add(id)) return@forEach
             val request = parseInternalRequest(obj)
-            if (parent != null) parent.requests.add(request) else collection.requests.add(request)
+            val folderId = obj.string("folder")?.takeIf { it.isNotBlank() }
+                ?: obj.string("folderId")?.takeIf { it.isNotBlank() }
+            val folder = folderId?.let { foldersById[it] }
+            if (folder != null) folder.requests.add(request) else collection.requests.add(request)
         }
+        return collection
     }
 
     private fun parseInternalRequest(obj: JsonObject): AstraRequest {

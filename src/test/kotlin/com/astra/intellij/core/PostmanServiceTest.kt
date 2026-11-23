@@ -228,6 +228,41 @@ class PostmanServiceTest {
     }
 
     @Test
+    fun `legacy dump places requests under the folder referenced by id`() {
+        val json = """
+            {
+              "version": 1,
+              "collections": [{
+                "id": "c1",
+                "name": "Flat",
+                "folders": [
+                  {"id": "f1", "name": "Auth", "order": ["r1", "r2"], "folders": []},
+                  {"id": "f2", "name": "Nested", "order": [], "folders": [
+                    {"id": "f3", "name": "Deep", "order": ["r3"], "folders": []}
+                  ]}
+                ],
+                "requests": [
+                  {"id": "r1", "name": "Login", "folder": "f1", "method": "POST", "url": "https://x/login", "headers": ""},
+                  {"id": "r2", "name": "Token", "folder": "f1", "method": "POST", "url": "https://x/token", "headers": ""},
+                  {"id": "r3", "name": "Ping", "folder": "f3", "method": "GET", "url": "https://x/ping", "headers": ""},
+                  {"id": "r4", "name": "Health", "method": "GET", "url": "https://x/health", "headers": ""}
+                ],
+                "order": ["f1", "f2", "r4"]
+              }]
+            }
+        """.trimIndent()
+
+        val collection = service.parseDataDump(json.toByteArray()).collections.single()
+
+        val auth = collection.folders.first { it.name == "Auth" }
+        assertEquals(listOf("Login", "Token"), auth.requests.map { it.name })
+        val nested = collection.folders.first { it.name == "Nested" }
+        assertEquals("Deep", nested.folders.single().name)
+        assertEquals(listOf("Ping"), nested.folders.single().requests.map { it.name })
+        assertEquals(listOf("Health"), collection.requests.map { it.name })
+    }
+
+    @Test
     fun `unrelated json in a dump does not create an empty collection`() {
         val parsed = service.parseDataDump("""{"version":1,"workspaces":[{"name":"Team"}]}""".toByteArray())
 
