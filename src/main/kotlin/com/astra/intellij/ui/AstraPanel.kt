@@ -775,14 +775,31 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         }
         try {
             val imported = postman.parseDataDump(bytes)
-            if (imported.collections.isEmpty() && imported.environments.isEmpty()) {
-                Messages.showInfoMessage(project, "No collections or environments found in this file", "Import")
+            if (imported.collections.isEmpty() &&
+                imported.environments.isEmpty() &&
+                imported.globals.isEmpty()
+            ) {
+                Messages.showInfoMessage(
+                    project,
+                    "No collections, environments or globals found in this file",
+                    "Import",
+                )
                 return
             }
             addImported(imported.collections, imported.environments)
+            imported.globals.forEach { (key, value) ->
+                if (!workspace.data.globals.containsKey(key)) {
+                    workspace.data.globals[key] = value
+                }
+            }
+            val globalsSuffix = if (imported.globals.isEmpty()) {
+                ""
+            } else {
+                ", ${imported.globals.size} global(s)"
+            }
             notify(
                 "Imported ${imported.collections.size} collection(s), " +
-                    "${imported.environments.size} environment(s)",
+                    "${imported.environments.size} environment(s)$globalsSuffix",
             )
         } catch (error: Exception) {
             Messages.showErrorDialog(project, error.message ?: "Invalid Postman data dump", "Import failed")

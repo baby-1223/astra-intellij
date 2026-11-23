@@ -22,6 +22,7 @@ import java.util.zip.ZipOutputStream
 data class PostmanDataDump(
     val collections: List<RequestCollection> = emptyList(),
     val environments: List<AstraEnvironment> = emptyList(),
+    val globals: Map<String, String> = emptyMap(),
 )
 
 /**
@@ -100,6 +101,7 @@ class PostmanService {
     private fun parseZip(bytes: ByteArray): PostmanDataDump {
         val collections = mutableListOf<RequestCollection>()
         val environments = mutableListOf<AstraEnvironment>()
+        val globals = linkedMapOf<String, String>()
         ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
             var entry = zip.nextEntry
             while (entry != null) {
@@ -108,13 +110,14 @@ class PostmanService {
                     runCatching { parseJsonPayload(text) }.getOrNull()?.let {
                         collections.addAll(it.collections)
                         environments.addAll(it.environments)
+                        globals.putAll(it.globals)
                     }
                 }
                 zip.closeEntry()
                 entry = zip.nextEntry
             }
         }
-        return PostmanDataDump(collections, environments)
+        return PostmanDataDump(collections, environments, globals)
     }
 
     private fun parseJsonPayload(text: String): PostmanDataDump {
@@ -122,27 +125,188 @@ class PostmanService {
         if (trimmed.startsWith("[")) {
             val collections = mutableListOf<RequestCollection>()
             val environments = mutableListOf<AstraEnvironment>()
+            val globals = linkedMapOf<String, String>()
             JsonParser.parseString(text).asJsonArray.forEach { element ->
                 if (!element.isJsonObject) return@forEach
                 val obj = element.asJsonObject
                 when {
+                    isDump(obj) -> {
+                        val dump = parseDump(obj)
+                        collections.addAll(dump.collections)
+                        environments.addAll(dump.environments)
+                        globals.putAll(dump.globals)
+                    }
                     isEnvironment(obj) -> parseEnvironment(obj)?.let { environments.add(it) }
-                    obj.has("item") || obj.has("info") -> collections.add(parseCollection(obj))
+                    isCollection(obj) -> collections.add(parseCollection(obj))
+                    isInternalCollection(obj) -> collections.add(parseInternalCollection(obj))
                 }
             }
-            return PostmanDataDump(collections, environments)
+            return PostmanDataDump(collections, environments, globals)
         }
         val root = JsonParser.parseString(text).asJsonObject
-        return if (isEnvironment(root)) {
-            PostmanDataDump(environments = listOfNotNull(parseEnvironment(root)))
-        } else {
-            PostmanDataDump(collections = listOf(parseCollection(root)))
+        return when {
+            isDump(root) -> parseDump(root)
+            isEnvironment(root) -> PostmanDataDump(environments = listOfNotNull(parseEnvironment(root)))
+            isCollection(root) -> PostmanDataDump(collections = listOf(parseCollection(root)))
+            isInternalCollection(root) -> PostmanDataDump(collections = listOf(parseInternalCollection(root)))
+            else -> PostmanDataDump()
         }
     }
 
     private fun isEnvironment(root: JsonObject): Boolean =
         root.array("values") != null &&
             (root.string("_postman_variable_scope") == "environment" || !root.has("item"))
+
+    /** A data dump wraps collections and environments in top-level arrays. */
+    private fun isDump(root: JsonObject): Boolean =
+        root.array("collections") != null || root.array("environments") != null
+
+    private fun isCollection(root: JsonObject): Boolean = root.has("info") || root.has("item")
+
+    /** Postman data dumps store collections in the legacy "requests"/"folders" shape. */
+    private fun isInternalCollection(root: JsonObject): Boolean =
+        root.has("requests") || root.has("folders")
+
+    private fun parseDump(root: JsonObject): PostmanDataDump {
+        val collections = mutableListOf<RequestCollection>()
+        root.array("collections")?.forEach { element ->
+            val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            collections.add(
+                if (isCollection(obj)) parseCollection(obj) else parseInternalCollection(obj),
+            )
+        }
+        val environments = mutableListOf<AstraEnvironment>()
+        root.array("environments")?.forEach { element ->
+            val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            parseEnvironment(obj)?.let { environments.add(it) }
+        }
+        val globals = linkedMapOf<String, String>()
+        root.array("globals")?.forEach { element ->
+            val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            val key = obj.string("key")?.takeIf { it.isNotBlank() } ?: return@forEach
+            val enabled = obj.get("enabled")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: true
+            if (enabled) globals[key] = obj.string("value").orEmpty()
+        }
+        return PostmanDataDump(collections, environments, globals)
+    }
+
+    /** Imports a legacy data-dump collection, including nested folders and requests. */
+    private fun parseInternalCollection(root: JsonObject): RequestCollection {
+        val collection = RequestCollection(
+            name = root.string("name")?.ifBlank { null } ?: "Imported Collection",
+        )
+        parseInternalItems(root.array("requests"), root.array("folders"), collection, null)
+        return collection
+    }
+
+    private fun parseInternalItems(
+        requests: JsonArray?,
+        folders: JsonArray?,
+        collection: RequestCollection,
+        parent: RequestFolder?,
+    ) {
+        folders?.forEach { element ->
+            val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            val folder = RequestFolder(name = obj.string("name")?.ifBlank { null } ?: "Untitled")
+            if (parent != null) parent.folders.add(folder) else collection.folders.add(folder)
+            parseInternalItems(obj.array("requests"), obj.array("folders"), collection, folder)
+        }
+        requests?.forEach { element ->
+            val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            val request = parseInternalRequest(obj)
+            if (parent != null) parent.requests.add(request) else collection.requests.add(request)
+        }
+    }
+
+    private fun parseInternalRequest(obj: JsonObject): AstraRequest {
+        val request = AstraRequest(name = obj.string("name")?.ifBlank { null } ?: "Untitled")
+        request.method = obj.string("method")?.uppercase(Locale.ROOT) ?: "GET"
+        parseUrl(obj.get("url"), request)
+        parseInternalHeaders(obj.get("headers"), request)
+        parseInternalBody(obj, request)
+        parseInternalAuth(obj, request)
+        obj.string("preRequestScript")?.takeIf { it.isNotBlank() }?.let { script ->
+            request.preRequest = script.lines().toMutableList()
+        }
+        return request
+    }
+
+    /** Legacy dumps keep headers as one "Key: Value" per line string. */
+    private fun parseInternalHeaders(element: JsonElement?, request: AstraRequest) {
+        if (element == null || element.isJsonNull) return
+        if (element.isJsonArray) {
+            parseHeaders(element.asJsonArray, request)
+            return
+        }
+        if (!element.isJsonPrimitive) return
+        element.asString.lines().forEach { line ->
+            val trimmed = line.trim()
+            val colon = trimmed.indexOf(':')
+            if (colon <= 0) return@forEach
+            val key = trimmed.substring(0, colon).trim()
+            val value = trimmed.substring(colon + 1).trim()
+            if (key.isNotEmpty()) request.headers.add(KeyValue(key = key, value = value))
+        }
+    }
+
+    private fun parseInternalBody(obj: JsonObject, request: AstraRequest) {
+        val mode = obj.string("dataMode")?.lowercase(Locale.ROOT).orEmpty()
+        val data = obj.get("data")
+        when {
+            mode == "raw" || (mode.isEmpty() && data?.isJsonPrimitive == true) -> {
+                val text = obj.string("rawModeData") ?: obj.string("data").orEmpty()
+                if (text.isNotBlank()) {
+                    request.body = text
+                    request.bodyMode = if (looksLikeJson(text)) "json" else "text"
+                }
+            }
+            mode == "urlencoded" || mode == "params" || mode == "formdata" -> {
+                val pairs = (data as? JsonArray)?.mapNotNull { element ->
+                    val entry = element.takeIf { it.isJsonObject }?.asJsonObject
+                        ?: return@mapNotNull null
+                    val enabled = entry.get("enabled")
+                        ?.takeIf { it.isJsonPrimitive }?.asBoolean ?: true
+                    if (!enabled) return@mapNotNull null
+                    entry.string("key")?.let { "$it=${entry.string("value").orEmpty()}" }
+                }.orEmpty()
+                if (pairs.isNotEmpty()) {
+                    request.body = pairs.joinToString("&")
+                    request.bodyMode = "text"
+                    ensureContentType(
+                        request,
+                        if (mode == "urlencoded") {
+                            "application/x-www-form-urlencoded"
+                        } else {
+                            "multipart/form-data"
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    private fun parseInternalAuth(obj: JsonObject, request: AstraRequest) {
+        val helper = obj.string("currentHelper")?.lowercase(Locale.ROOT)
+            ?.takeIf { it != "normal" } ?: return
+        val attributes = obj.obj("helperAttributes") ?: return
+        when (helper) {
+            "basicauth" -> request.auth = AuthConfig(
+                type = "basic",
+                username = attributes.string("username").orEmpty(),
+                password = attributes.string("password").orEmpty(),
+            )
+            "bearerauth" -> request.auth = AuthConfig(
+                type = "bearer",
+                token = attributes.string("token").orEmpty(),
+            )
+            "apikeyauth" -> request.auth = AuthConfig(
+                type = "apikey",
+                apiKeyName = attributes.string("key").orEmpty(),
+                apiKeyValue = attributes.string("value").orEmpty(),
+                apiKeyIn = attributes.string("in")?.ifBlank { "header" } ?: "header",
+            )
+        }
+    }
 
 
     fun exportCollection(collections: List<RequestCollection>, name: String): String {

@@ -184,7 +184,113 @@ class PostmanServiceTest {
         assertEquals("v", parsed.environments.single().variables["k"])
     }
 
+    @Test
+    fun `imports a legacy data dump with all collections environments and globals`() {
+        val parsed = service.parseDataDump(LEGACY_DUMP.toByteArray())
+
+        assertEquals(1, parsed.collections.size)
+        val collection = parsed.collections.single()
+        assertEquals("Team API", collection.name)
+        assertEquals("Ping", collection.requests.single().name)
+
+        val folder = collection.folders.single()
+        assertEquals("Auth", folder.name)
+        val login = folder.requests.single()
+        assertEquals("Login", login.name)
+        assertEquals("POST", login.method)
+        assertEquals("https://api.test/login", login.url)
+        assertEquals(2, login.headers.size)
+        assertEquals("astra", login.headers.first { it.key == "X-Team" }.value)
+        assertEquals("json", login.bodyMode)
+        assertEquals("{\"user\":\"ada\"}", login.body)
+        assertEquals("bearer", login.auth.type)
+        assertEquals("{{token}}", login.auth.token)
+        assertEquals("pm.environment.set('a','b');", login.preRequest.single())
+
+        assertEquals("Dev", parsed.environments.single().name)
+        assertEquals("https://api.test", parsed.environments.single().variables["baseUrl"])
+        assertEquals(mapOf("g" to "1"), parsed.globals)
+    }
+
+    @Test
+    fun `imports a legacy data dump stored inside a zip`() {
+        val output = java.io.ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(output).use { zip ->
+            zip.putNextEntry(java.util.zip.ZipEntry("Backup.postman_dump.json"))
+            zip.write(LEGACY_DUMP.toByteArray())
+            zip.closeEntry()
+        }
+
+        val parsed = service.parseDataDump(output.toByteArray())
+
+        assertEquals("Team API", parsed.collections.single().name)
+        assertEquals("Dev", parsed.environments.single().name)
+    }
+
+    @Test
+    fun `unrelated json in a dump does not create an empty collection`() {
+        val parsed = service.parseDataDump("""{"version":1,"workspaces":[{"name":"Team"}]}""".toByteArray())
+
+        assertTrue(parsed.collections.isEmpty())
+        assertTrue(parsed.environments.isEmpty())
+    }
+
     private companion object {
+        private val LEGACY_DUMP = """
+            {
+              "version": 1,
+              "collections": [
+                {
+                  "id": "c1",
+                  "name": "Team API",
+                  "order": ["r1"],
+                  "folders": [
+                    {
+                      "id": "f1",
+                      "name": "Auth",
+                      "order": ["r2"],
+                      "folders": [],
+                      "requests": [
+                        {
+                          "id": "r2",
+                          "name": "Login",
+                          "method": "POST",
+                          "url": "https://api.test/login",
+                          "headers": "Content-Type: application/json\nX-Team: astra\n",
+                          "dataMode": "raw",
+                          "data": "{\"user\":\"ada\"}",
+                          "currentHelper": "bearerAuth",
+                          "helperAttributes": {"token": "{{token}}"},
+                          "preRequestScript": "pm.environment.set('a','b');"
+                        }
+                      ]
+                    }
+                  ],
+                  "requests": [
+                    {
+                      "id": "r1",
+                      "name": "Ping",
+                      "method": "GET",
+                      "url": "https://api.test/ping",
+                      "headers": ""
+                    }
+                  ]
+                }
+              ],
+              "environments": [
+                {
+                  "id": "e1",
+                  "name": "Dev",
+                  "values": [{"key": "baseUrl", "value": "https://api.test", "enabled": true}]
+                }
+              ],
+              "globals": [
+                {"key": "g", "value": "1", "enabled": true},
+                {"key": "off", "value": "2", "enabled": false}
+              ]
+            }
+        """.trimIndent()
+
         private val COLLECTION = """
             {
               "info": {"name": "Demo"},
