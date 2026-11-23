@@ -39,7 +39,7 @@ class PostmanService {
 
     private fun parseCollection(root: JsonObject): RequestCollection {
         val info = root.obj("info")
-        val variables = readVariableSet(root.array("variable"))
+        val variables = readVariablesFrom(root)
         val collection = RequestCollection(
             name = info?.string("name")?.ifBlank { null } ?: "Imported Collection",
             variables = variables.values,
@@ -80,6 +80,32 @@ class PostmanService {
     private fun readVariables(values: JsonArray?): MutableMap<String, String> {
         val result = readVariableSet(values)
         return result.values.filterKeys { it !in result.disabled }.toMutableMap()
+    }
+
+    /**
+     * Reads variables from any shape Postman emits: "variable" array, "variables" array, or a
+     * "variables" key/value object (legacy dumps).
+     */
+    private fun readVariablesFrom(obj: JsonObject): VariableSet {
+        obj.array("variable")?.let { return readVariableSet(it) }
+        obj.array("variables")?.let { return readVariableSet(it) }
+        val variables = obj.obj("variables") ?: return VariableSet(linkedMapOf(), linkedSetOf())
+        val result = VariableSet(linkedMapOf(), linkedSetOf())
+        variables.entrySet().forEach { (key, value) ->
+            when {
+                value.isJsonPrimitive -> result.values[key] = value.asString
+                value.isJsonObject -> {
+                    val entry = value.asJsonObject
+                    result.values[key] = entry.string("value").orEmpty()
+                    val enabled = entry.get("enabled")
+                        ?.takeIf { it.isJsonPrimitive }?.asBoolean ?: true
+                    val disabled = entry.get("disabled")
+                        ?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false
+                    if (!enabled || disabled) result.disabled.add(key)
+                }
+            }
+        }
+        return result
     }
 
     private fun parseEnvironment(root: JsonObject): AstraEnvironment? {
@@ -240,7 +266,7 @@ class PostmanService {
      * collection root and reference its folder through a "folder" id. Both shapes are supported.
      */
     private fun parseInternalCollection(root: JsonObject): RequestCollection {
-        val collectionVariables = readVariableSet(root.array("variable"))
+        val collectionVariables = readVariablesFrom(root)
         val collection = RequestCollection(
             name = root.string("name")?.ifBlank { null } ?: "Imported Collection",
             variables = collectionVariables.values,
@@ -263,7 +289,7 @@ class PostmanService {
             val id = obj.string("id")?.takeIf { it.isNotBlank() }
                 ?: "folder-${foldersById.size}"
             foldersById[id]?.let { return it }
-            val folderVariables = readVariableSet(obj.array("variable"))
+            val folderVariables = readVariablesFrom(obj)
             val folder = RequestFolder(
                 name = obj.string("name")?.ifBlank { null } ?: "Untitled",
                 variables = folderVariables.values,
@@ -370,6 +396,7 @@ class PostmanService {
         val request = AstraRequest(name = obj.string("name")?.ifBlank { null } ?: "Untitled")
         request.method = obj.string("method")?.uppercase(Locale.ROOT) ?: "GET"
         parseUrl(obj.get("url"), request)
+        parseInternalParams(obj, request)
         parseInternalHeaders(obj.get("headers"), request)
         parseInternalBody(obj, request)
         parseInternalAuth(obj, request)
@@ -381,6 +408,21 @@ class PostmanService {
             if (script.isNotEmpty()) request.preRequest = script.toMutableList()
         }
         return request
+    }
+
+    /** Legacy dumps may keep the query separately as "params" or "query" arrays. */
+    private fun parseInternalParams(obj: JsonObject, request: AstraRequest) {
+        val entries = obj.array("params") ?: obj.array("query") ?: return
+        entries.forEach { element ->
+            val entry = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            val key = entry.string("key") ?: entry.string("name") ?: return@forEach
+            if (key.isBlank()) return@forEach
+            val value = entry.string("value").orEmpty()
+            if (request.params.any { it.key == key && it.value == value }) return@forEach
+            val disabled = entry.get("disabled")?.takeIf { it.isJsonPrimitive }?.asBoolean
+                ?: !(entry.get("enabled")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: true)
+            request.params.add(KeyValue(enabled = !disabled, key = key, value = value))
+        }
     }
 
     /** Legacy dumps keep headers as one "Key: Value" per line string. */
@@ -545,7 +587,7 @@ class PostmanService {
                     if (parent != null) parent.requests.add(parsed) else collection.requests.add(parsed)
                 }
                 else -> {
-                    val folderVariables = readVariableSet(item.array("variable"))
+                    val folderVariables = readVariablesFrom(item)
                     val folder = RequestFolder(
                         name = name,
                         variables = folderVariables.values,
@@ -603,7 +645,10 @@ class PostmanService {
     private fun parseUrl(element: JsonElement?, request: AstraRequest) {
         if (element == null || element.isJsonNull) return
         if (element.isJsonPrimitive) {
-            request.url = element.asString.replace(PATH_VARIABLE) { "{{${it.groupValues[1]}}}" }
+            val raw = element.asString
+            request.url = raw.replace(PATH_VARIABLE) { "{{${it.groupValues[1]}}}" }
+            addQueryParamsFromUrl(raw, request)
+            if (request.params.isNotEmpty()) request.url = stripQuery(request.url)
             return
         }
         val url = element.asJsonObject
@@ -620,6 +665,8 @@ class PostmanService {
                 ),
             )
         }
+        // Some dumps only keep the query inside "raw" without a "query" array.
+        if (request.params.isEmpty()) addQueryParamsFromUrl(raw, request)
         url.array("variable")?.forEach { entry ->
             val variable = entry.asJsonObject
             val key = variable.string("key") ?: return@forEach
@@ -627,7 +674,34 @@ class PostmanService {
                 request.params.add(KeyValue(key = key, value = variable.string("value").orEmpty()))
             }
         }
+        if (request.params.isNotEmpty()) request.url = stripQuery(request.url)
     }
+
+    /** Parses "a=1&b=2" from a raw URL into the Params table. */
+    private fun addQueryParamsFromUrl(raw: String, request: AstraRequest) {
+        val start = raw.indexOf('?')
+        if (start < 0) return
+        val fragment = raw.indexOf('#', start)
+        val query = raw.substring(start + 1, if (fragment < 0) raw.length else fragment)
+        query.split('&').filter { it.isNotBlank() }.forEach { pair ->
+            val separator = pair.indexOf('=')
+            val key = decodeQuery(if (separator < 0) pair else pair.substring(0, separator))
+            val value = decodeQuery(if (separator < 0) "" else pair.substring(separator + 1))
+            if (key.isNotBlank() && request.params.none { it.key == key && it.value == value }) {
+                request.params.add(KeyValue(key = key, value = value))
+            }
+        }
+    }
+
+    private fun stripQuery(url: String): String {
+        val index = url.indexOf('?')
+        return if (index < 0) url else url.substring(0, index)
+    }
+
+    private fun decodeQuery(text: String): String =
+        runCatching {
+            java.net.URLDecoder.decode(text, java.nio.charset.StandardCharsets.UTF_8)
+        }.getOrDefault(text)
 
     private fun buildRawUrl(url: JsonObject): String {
         val protocol = url.string("protocol") ?: "https"

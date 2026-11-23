@@ -32,7 +32,7 @@ class PostmanServiceTest {
         val login = folder.requests[0]
         assertEquals("Login", login.name)
         assertEquals("POST", login.method)
-        assertEquals("https://api.example.com/users/{{id}}?page=2", login.url)
+        assertEquals("https://api.example.com/users/{{id}}", login.url)
         assertEquals(2, login.headers.size)
         assertFalse(login.headers[1].enabled)
         assertEquals("json", login.bodyMode)
@@ -73,7 +73,9 @@ class PostmanServiceTest {
         val request = parsed.folders[0].requests[0]
         assertEquals("Create User", request.name)
         assertEquals("POST", request.method)
-        assertEquals("https://api.example.com/users?verbose=true", request.url)
+        assertEquals("https://api.example.com/users", request.url)
+        assertEquals("verbose", request.params.single().key)
+        assertEquals("true", request.params.single().value)
         assertEquals("json", request.bodyMode)
         assertEquals("{\"name\":\"Ada\"}", request.body)
         assertEquals("bearer", request.auth.type)
@@ -340,6 +342,67 @@ class PostmanServiceTest {
         assertEquals(collection.variables, reparsed.variables)
         assertEquals(setOf("off"), reparsed.disabledVariables)
         assertEquals("t1", reparsed.folders.single().variables["token"])
+    }
+
+    @Test
+    fun `legacy dump imports map variables and URL or params query`() {
+        val json = """
+            {
+              "name": "Backup",
+              "variables": {
+                "baseUrl": "https://api.test",
+                "off": {"value": "x", "enabled": false}
+              },
+              "folders": [
+                {"id": "f1", "name": "Folder", "variables": {"token": "abc"}}
+              ],
+              "requests": [
+                {"name": "List", "method": "GET", "folder": "f1",
+                 "url": "https://api.test/users?page=2&q=astra"},
+                {"name": "Params", "method": "GET", "folder": "f1",
+                 "url": {"raw": "https://api.test/x"},
+                 "params": [{"key": "a", "value": "1", "enabled": true},
+                            {"key": "b", "value": "2", "enabled": false}]}
+              ]
+            }
+        """.trimIndent()
+
+        val collection = service.parseDataDump(json.toByteArray()).collections.single()
+        val folder = collection.folders.single()
+        val list = folder.requests.first { it.name == "List" }
+        val params = folder.requests.first { it.name == "Params" }
+
+        assertEquals("https://api.test", collection.variables["baseUrl"])
+        assertTrue(collection.disabledVariables.contains("off"))
+        assertEquals("abc", folder.variables["token"])
+
+        assertEquals("https://api.test/users", list.url)
+        assertEquals(listOf("page" to "2", "q" to "astra"), list.params.map { it.key to it.value })
+
+        assertEquals("https://api.test/x", params.url)
+        assertEquals(listOf("a" to "1", "b" to "2"), params.params.map { it.key to it.value })
+        assertFalse(params.params.first { it.key == "b" }.enabled)
+    }
+
+    @Test
+    fun `query in a raw v2_1 url becomes params`() {
+        val json = """
+            {
+              "info": {"name": "Raw", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+              "item": [{
+                "name": "Items",
+                "request": {"method": "GET", "url": {"raw": "https://x/items?limit=10&q=astra%20db"}}
+              }]
+            }
+        """.trimIndent()
+
+        val request = service.parseDataDump(json.toByteArray()).collections.single().requests.single()
+
+        assertEquals("https://x/items", request.url)
+        assertEquals(
+            listOf("limit" to "10", "q" to "astra db"),
+            request.params.map { it.key to it.value },
+        )
     }
 
     @Test
