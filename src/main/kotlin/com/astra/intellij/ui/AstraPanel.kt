@@ -222,6 +222,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                         HttpClients.clearCookies()
                         notify("Cookies cleared")
                     },
+                    "Reset Workspace..." to ::resetWorkspace,
                 ))
             }
         })
@@ -705,6 +706,26 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
 
     private fun editSettings() {
         SettingsDialog(project, workspace.data.settings).show()
+    }
+
+    private fun resetWorkspace() {
+        val answer = Messages.showYesNoDialog(
+            project,
+            "Remove all collections, requests, environments, globals, history and settings " +
+                "stored by Astra in this IDE? This cannot be undone.",
+            "Reset Astra Workspace",
+            "Reset",
+            "Cancel",
+            Messages.getWarningIcon(),
+        )
+        if (answer != Messages.YES) return
+        sessions.toList().forEach(::closeSession)
+        HttpClients.clearCookies()
+        workspace.reset()
+        refreshTree()
+        refreshEnvironments()
+        newRequest()
+        notify("Workspace reset")
     }
 
     private fun refreshEnvironments() {

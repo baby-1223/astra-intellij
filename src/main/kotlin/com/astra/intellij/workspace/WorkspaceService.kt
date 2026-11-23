@@ -59,6 +59,13 @@ class WorkspaceService : PersistentStateComponent<WorkspaceService.State> {
         ensureEnvironment()
     }
 
+    /** Restores the first-run state: no collections, history or settings, one empty environment. */
+    fun reset() {
+        data = WorkspaceData()
+        ensureEnvironment()
+        notifyChanged(this)
+    }
+
     fun activeVariables(): Map<String, String> {
         val environmentVars = data.environments
             .firstOrNull { it.id == data.activeEnvironmentId }?.variables ?: emptyMap()
