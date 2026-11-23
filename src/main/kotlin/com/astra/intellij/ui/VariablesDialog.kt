@@ -18,18 +18,26 @@ import javax.swing.table.DefaultTableModel
 class VariablesDialog(
     dialogTitle: String,
     private val variables: MutableMap<String, String>,
+    private val disabledVariables: MutableSet<String>,
 ) : DialogWrapper(true) {
-    private val tableModel = object : DefaultTableModel(arrayOf("Variable", "Value"), 0) {}
+    private val tableModel = object : DefaultTableModel(arrayOf("Enabled", "Variable", "Value"), 0) {
+        override fun getColumnClass(columnIndex: Int): Class<*> =
+            if (columnIndex == 0) java.lang.Boolean::class.java else String::class.java
+    }
     private val table = JTable(tableModel)
 
     init {
         title = dialogTitle
         val renderer = DefaultTableCellRenderer().apply { horizontalAlignment = SwingConstants.LEFT }
-        table.columnModel.getColumn(0).cellRenderer = renderer
         table.columnModel.getColumn(1).cellRenderer = renderer
+        table.columnModel.getColumn(2).cellRenderer = renderer
+        table.columnModel.getColumn(0).preferredWidth = 70
+        table.columnModel.getColumn(0).maxWidth = 70
         (table.getDefaultEditor(String::class.java) as? DefaultCellEditor)?.clickCountToStart = 1
-        variables.forEach { (key, value) -> tableModel.addRow(arrayOf(key, value)) }
-        tableModel.addRow(arrayOf("", ""))
+        variables.forEach { (key, value) ->
+            tableModel.addRow(arrayOf<Any>(key !in disabledVariables, key, value))
+        }
+        tableModel.addRow(arrayOf<Any>(true, "", ""))
         init()
     }
 
@@ -39,11 +47,11 @@ class VariablesDialog(
             add(JButton("Add Variable").apply {
                 addActionListener {
                     if (table.isEditing) table.cellEditor.stopCellEditing()
-                    tableModel.addRow(arrayOf("", ""))
+                    tableModel.addRow(arrayOf<Any>(true, "", ""))
                     val row = tableModel.rowCount - 1
                     table.setRowSelectionInterval(row, row)
                     table.scrollRectToVisible(table.getCellRect(row, 0, true))
-                    table.editCellAt(row, 0)
+                    table.editCellAt(row, 1)
                     table.editorComponent?.requestFocusInWindow()
                 }
             })
@@ -61,11 +69,13 @@ class VariablesDialog(
     override fun doOKAction() {
         if (table.isEditing) table.cellEditor.stopCellEditing()
         variables.clear()
+        disabledVariables.clear()
         for (row in 0 until tableModel.rowCount) {
-            val key = tableModel.getValueAt(row, 0)?.toString()?.trim().orEmpty()
-            if (key.isNotEmpty()) {
-                variables[key] = tableModel.getValueAt(row, 1)?.toString().orEmpty()
-            }
+            val key = tableModel.getValueAt(row, 1)?.toString()?.trim().orEmpty()
+            if (key.isEmpty()) continue
+            variables[key] = tableModel.getValueAt(row, 2)?.toString().orEmpty()
+            val enabled = tableModel.getValueAt(row, 0) as? Boolean ?: true
+            if (!enabled) disabledVariables.add(key)
         }
         super.doOKAction()
     }

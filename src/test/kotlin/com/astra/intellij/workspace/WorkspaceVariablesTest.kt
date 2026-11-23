@@ -15,12 +15,14 @@ class WorkspaceVariablesTest {
         val folder = RequestFolder(
             name = "Auth",
             requests = mutableListOf(request),
-            variables = mutableMapOf("a" to "folder", "b" to "folder"),
+            variables = mutableMapOf("a" to "folder", "b" to "folder", "hidden" to "folder"),
+            disabledVariables = mutableSetOf("hidden"),
         )
         val collection = RequestCollection(
             name = "Team",
             folders = mutableListOf(folder),
-            variables = mutableMapOf("a" to "collection", "c" to "collection"),
+            variables = mutableMapOf("a" to "collection", "c" to "collection", "off" to "collection"),
+            disabledVariables = mutableSetOf("off"),
         )
         workspace.data.collections.clear()
         workspace.data.collections.add(collection)

@@ -327,7 +327,8 @@ class PostmanServiceTest {
 
         val collection = service.parseDataDump(json.toByteArray()).collections.single()
         assertEquals("https://api.test", collection.variables["baseUrl"])
-        assertFalse(collection.variables.containsKey("off"))
+        assertEquals("x", collection.variables["off"])
+        assertTrue(collection.disabledVariables.contains("off"))
         val folder = collection.folders.single()
         assertEquals("t1", folder.variables["token"])
         val request = folder.requests.single()
@@ -337,6 +338,7 @@ class PostmanServiceTest {
         val exported = service.exportCollection(listOf(collection), collection.name)
         val reparsed = service.parseDataDump(exported.toByteArray()).collections.single()
         assertEquals(collection.variables, reparsed.variables)
+        assertEquals(setOf("off"), reparsed.disabledVariables)
         assertEquals("t1", reparsed.folders.single().variables["token"])
     }
 

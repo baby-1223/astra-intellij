@@ -82,8 +82,15 @@ class WorkspaceService : PersistentStateComponent<WorkspaceService.State> {
     fun scopedVariables(request: AstraRequest?): Map<String, String> {
         if (request == null) return emptyMap()
         val collection = data.collections.firstOrNull { it.containsRequest(request) } ?: return emptyMap()
-        val merged = LinkedHashMap<String, String>(collection.variables)
-        collection.folderPathTo(request)?.forEach { merged.putAll(it.variables) }
+        val merged = LinkedHashMap<String, String>()
+        collection.variables.forEach { (key, value) ->
+            if (key !in collection.disabledVariables) merged[key] = value
+        }
+        collection.folderPathTo(request)?.forEach { folder ->
+            folder.variables.forEach { (key, value) ->
+                if (key !in folder.disabledVariables) merged[key] = value
+            }
+        }
         return merged
     }
 

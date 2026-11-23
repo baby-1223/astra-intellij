@@ -39,23 +39,39 @@ class PostmanService {
 
     private fun parseCollection(root: JsonObject): RequestCollection {
         val info = root.obj("info")
-        val collection = RequestCollection(name = info?.string("name")?.ifBlank { null } ?: "Imported Collection")
-        collection.variables = readVariables(root.array("variable"))
+        val variables = readVariableSet(root.array("variable"))
+        val collection = RequestCollection(
+            name = info?.string("name")?.ifBlank { null } ?: "Imported Collection",
+            variables = variables.values,
+            disabledVariables = variables.disabled,
+        )
         root.array("item")?.let { parseItems(it, collection, null) }
         return collection
     }
 
-    /** Reads Postman "key/value/enabled" variable arrays (collection, folder, environment). */
-    private fun readVariables(values: JsonArray?): MutableMap<String, String> {
-        val result = linkedMapOf<String, String>()
+    private class VariableSet(
+        val values: MutableMap<String, String>,
+        val disabled: MutableSet<String>,
+    )
+
+    /** Reads a Postman "key/value/enabled" variable array, keeping disabled entries. */
+    private fun readVariableSet(values: JsonArray?): VariableSet {
+        val result = VariableSet(linkedMapOf(), linkedSetOf())
         values?.forEach { element ->
             val value = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
             val key = value.string("key")?.takeIf { it.isNotBlank() } ?: return@forEach
             val enabled = value.get("enabled")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: true
             val disabled = value.get("disabled")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false
-            if (enabled && !disabled) result[key] = value.string("value").orEmpty()
+            result.values[key] = value.string("value").orEmpty()
+            if (!enabled || disabled) result.disabled.add(key)
         }
         return result
+    }
+
+    /** Reads only the enabled entries, used for environments which have no disabled state. */
+    private fun readVariables(values: JsonArray?): MutableMap<String, String> {
+        val result = readVariableSet(values)
+        return result.values.filterKeys { it !in result.disabled }.toMutableMap()
     }
 
     private fun parseEnvironment(root: JsonObject): AstraEnvironment? {
@@ -206,9 +222,11 @@ class PostmanService {
      * collection root and reference its folder through a "folder" id. Both shapes are supported.
      */
     private fun parseInternalCollection(root: JsonObject): RequestCollection {
+        val collectionVariables = readVariableSet(root.array("variable"))
         val collection = RequestCollection(
             name = root.string("name")?.ifBlank { null } ?: "Imported Collection",
-            variables = readVariables(root.array("variable")),
+            variables = collectionVariables.values,
+            disabledVariables = collectionVariables.disabled,
         )
         val foldersById = linkedMapOf<String, RequestFolder>()
         val folderObjects = linkedMapOf<String, JsonObject>()
@@ -227,9 +245,11 @@ class PostmanService {
             val id = obj.string("id")?.takeIf { it.isNotBlank() }
                 ?: "folder-${foldersById.size}"
             foldersById[id]?.let { return it }
+            val folderVariables = readVariableSet(obj.array("variable"))
             val folder = RequestFolder(
                 name = obj.string("name")?.ifBlank { null } ?: "Untitled",
-                variables = readVariables(obj.array("variable")),
+                variables = folderVariables.values,
+                disabledVariables = folderVariables.disabled,
             )
             foldersById[id] = folder
             folderObjects[id] = obj
@@ -437,7 +457,10 @@ class PostmanService {
             }
         }
         if (collections.size == 1) {
-            root.add("variable", variablesJson(collections.first().variables))
+            root.add(
+                "variable",
+                variablesJson(collections.first().variables, collections.first().disabledVariables),
+            )
         }
         root.add("item", items)
         return gson.toJson(root)
@@ -452,13 +475,16 @@ class PostmanService {
         return gson.toJson(root)
     }
 
-    private fun variablesJson(variables: Map<String, String>): JsonArray = JsonArray().apply {
+    private fun variablesJson(
+        variables: Map<String, String>,
+        disabled: Set<String> = emptySet(),
+    ): JsonArray = JsonArray().apply {
         variables.forEach { (key, value) ->
             add(JsonObject().apply {
                 addProperty("key", key)
                 addProperty("value", value)
                 addProperty("type", "default")
-                addProperty("enabled", true)
+                addProperty("enabled", key !in disabled)
             })
         }
     }
@@ -470,7 +496,7 @@ class PostmanService {
 
     private fun folderJson(folder: RequestFolder): JsonObject = JsonObject().apply {
         addProperty("name", folder.name)
-        add("variable", variablesJson(folder.variables))
+        add("variable", variablesJson(folder.variables, folder.disabledVariables))
         add("item", JsonArray().also { array ->
             folder.requests.forEach { array.add(requestJson(it)) }
             folder.folders.forEach { array.add(folderJson(it)) }
@@ -490,9 +516,11 @@ class PostmanService {
                     if (parent != null) parent.requests.add(parsed) else collection.requests.add(parsed)
                 }
                 else -> {
+                    val folderVariables = readVariableSet(item.array("variable"))
                     val folder = RequestFolder(
                         name = name,
-                        variables = readVariables(item.array("variable")),
+                        variables = folderVariables.values,
+                        disabledVariables = folderVariables.disabled,
                     )
                     if (parent != null) parent.folders.add(folder) else collection.folders.add(folder)
                     children?.let { parseItems(it, collection, folder) }

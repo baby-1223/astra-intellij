@@ -564,14 +564,24 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     }
 
     private fun editVariables(collection: RequestCollection) {
-        if (VariablesDialog("Collection Variables — ${collection.name}", collection.variables).showAndGet()) {
+        if (VariablesDialog(
+                "Collection Variables — ${collection.name}",
+                collection.variables,
+                collection.disabledVariables,
+            ).showAndGet()
+        ) {
             structureChanged()
             notify("Collection variables saved")
         }
     }
 
     private fun editVariables(folder: RequestFolder) {
-        if (VariablesDialog("Folder Variables — ${folder.name}", folder.variables).showAndGet()) {
+        if (VariablesDialog(
+                "Folder Variables — ${folder.name}",
+                folder.variables,
+                folder.disabledVariables,
+            ).showAndGet()
+        ) {
             structureChanged()
             notify("Folder variables saved")
         }

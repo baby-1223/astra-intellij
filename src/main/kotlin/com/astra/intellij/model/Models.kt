@@ -40,6 +40,7 @@ data class RequestFolder(
     var requests: MutableList<AstraRequest> = mutableListOf(),
     var folders: MutableList<RequestFolder> = mutableListOf(),
     var variables: MutableMap<String, String> = mutableMapOf(),
+    var disabledVariables: MutableSet<String> = mutableSetOf(),
 )
 
 data class RequestCollection(
@@ -48,6 +49,7 @@ data class RequestCollection(
     var folders: MutableList<RequestFolder> = mutableListOf(),
     var requests: MutableList<AstraRequest> = mutableListOf(),
     var variables: MutableMap<String, String> = mutableMapOf(),
+    var disabledVariables: MutableSet<String> = mutableSetOf(),
 )
 
 /** True when this collection or any of its folders owns [request] (identity comparison). */
@@ -158,6 +160,7 @@ fun WorkspaceData.normalize(): WorkspaceData {
         if (collection.requests == null) collection.requests = mutableListOf()
         if (collection.folders == null) collection.folders = mutableListOf()
         if (collection.variables == null) collection.variables = mutableMapOf()
+        if (collection.disabledVariables == null) collection.disabledVariables = mutableSetOf()
         collection.requests.forEach { it.normalize() }
         fun normalizeFolder(folder: RequestFolder) {
             if (folder.id.isNullOrEmpty()) folder.id = java.util.UUID.randomUUID().toString()
@@ -165,6 +168,7 @@ fun WorkspaceData.normalize(): WorkspaceData {
             if (folder.requests == null) folder.requests = mutableListOf()
             if (folder.folders == null) folder.folders = mutableListOf()
             if (folder.variables == null) folder.variables = mutableMapOf()
+            if (folder.disabledVariables == null) folder.disabledVariables = mutableSetOf()
             folder.requests.forEach { it.normalize() }
             folder.folders.forEach { normalizeFolder(it) }
         }
