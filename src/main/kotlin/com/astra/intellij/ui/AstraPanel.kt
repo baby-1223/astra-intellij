@@ -503,6 +503,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 item("Add Folder", AstraIcons.folder, ADD_FOLDER_STROKE) { addFolder(value) }
                 menu.addSeparator()
                 item("Run Collection", AstraIcons.run, RUN_STROKE) { runRequests(value.name, value.allRequests()) }
+                item("Edit Variables...") { editVariables(value) }
                 menu.addSeparator()
                 item("Rename", AstraIcons.rename, RENAME_STROKE) { renameValue(value) }
                 item("Duplicate", AstraIcons.duplicate, DUPLICATE_STROKE) { duplicateValue(value) }
@@ -514,6 +515,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 item("Add Folder", AstraIcons.folder, ADD_FOLDER_STROKE) { addFolder(value) }
                 menu.addSeparator()
                 item("Run Folder", AstraIcons.run, RUN_STROKE) { runRequests(value.name, value.allRequests()) }
+                item("Edit Variables...") { editVariables(value) }
                 menu.addSeparator()
                 item("Rename", AstraIcons.rename, RENAME_STROKE) { renameValue(value) }
                 item("Duplicate", AstraIcons.duplicate, DUPLICATE_STROKE) { duplicateValue(value) }
@@ -559,6 +561,20 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         }
         sessions.firstOrNull { it.request === value }?.reloadEditor()
         structureChanged()
+    }
+
+    private fun editVariables(collection: RequestCollection) {
+        if (VariablesDialog("Collection Variables — ${collection.name}", collection.variables).showAndGet()) {
+            structureChanged()
+            notify("Collection variables saved")
+        }
+    }
+
+    private fun editVariables(folder: RequestFolder) {
+        if (VariablesDialog("Folder Variables — ${folder.name}", folder.variables).showAndGet()) {
+            structureChanged()
+            notify("Folder variables saved")
+        }
     }
 
     private fun duplicateValue(value: Any) {
