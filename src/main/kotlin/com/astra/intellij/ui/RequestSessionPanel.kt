@@ -74,6 +74,10 @@ class RequestSessionPanel(
         }
         add(split, BorderLayout.CENTER)
         editor.showRequest(request)
+        editor.codeProvider = { language ->
+            commitEditor()
+            codegen.generate(request, workspace.variablesFor(request), language)
+        }
         editor.sendButton.addActionListener { send() }
         editor.cancelButton.addActionListener {
             cancelPreparing = true

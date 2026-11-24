@@ -26,6 +26,10 @@ A local-first API client for JetBrains IDEs. Design, send, and automate HTTP req
 - **Large responses** — previews are capped at 1.5M characters with an explicit truncation notice, while **Save…** exports the complete response body.
 - **Charset detection** — responses are decoded from the declared charset, BOM or byte content (UTF-8 / UTF-16 / GB18030 and other JVM charsets), so non-UTF-8 endpoints display correctly.
 
+## What's new in 0.3.14
+
+- **Code tab** — the request editor now has a **Code** tab right after **Post-response**. Pick a language (cURL, Python, JavaScript, Go, Java, IDEA HTTP Client) and copy a runnable snippet that reflects the current URL, headers, authentication, and body, including resolved environment variables.
+
 ## What's new in 0.3.13
 
 - **IDE integration** — right-click a `.http` / `.rest` or OpenAPI document (JSON or YAML) and choose **Import into Astra**; right-click a Spring controller and choose **Generate Astra Requests** to create one request per mapping, including path variables, query parameters, headers, and DTO request bodies.

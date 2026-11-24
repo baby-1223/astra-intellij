@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.astra.apiclient</id>
     <name>Astra</name>
-    <version>0.3.13</version>
+    <version>0.3.14</version>
     <vendor url="https://github.com/baby-1223/astra-intellij">APost</vendor>
 
     <icon>/icons/astra-plugin.svg</icon>
@@ -54,6 +54,11 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.3.14</h3>
+        <ul>
+            <li>New <b>Code</b> tab after <b>Post-response</b> with cURL, Python, JavaScript, Go, Java, and IDEA HTTP Client snippets for the current request.</li>
+            <li>Snippets include resolved variables and can be copied with one click.</li>
+        </ul>
         <h3>0.3.13</h3>
         <ul>
             <li>Collection and folder runner reports can be exported as JUnit XML for CI pipelines.</li>

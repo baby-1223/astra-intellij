@@ -1,5 +1,6 @@
 package com.astra.intellij.ui
 
+import com.astra.intellij.core.CodegenLanguage
 import com.astra.intellij.model.AstraRequest
 import com.intellij.util.ui.UIUtil
 import java.awt.BorderLayout
@@ -44,6 +45,13 @@ class RequestEditorPanel(
     private val testsArea = JTextArea(6, 40)
     private val preRequestArea = JTextArea(4, 40)
     private val postResponseArea = JTextArea(4, 40)
+    private val codeLanguageBox = JComboBox(CodegenLanguage.values().map { it.label }.toTypedArray())
+    private val codeArea = JTextArea(14, 60)
+    private val codeStatus = JLabel()
+    private val codePanel = JPanel(BorderLayout(0, 4))
+
+    /** Produces the snippet shown in the Code tab from the current editor state. */
+    var codeProvider: ((CodegenLanguage) -> String)? = null
     private val authTypes = listOf("none", "inherit", "bearer", "basic", "apikey", "oauth2")
     private val authTypeBox = JComboBox(arrayOf("None", "Inherit from parent", "Bearer", "Basic", "API Key", "OAuth 2.0"))
     private val tokenField = JTextField()
@@ -192,6 +200,23 @@ class RequestEditorPanel(
             }, BorderLayout.NORTH)
             add(JScrollPane(postResponseArea), BorderLayout.CENTER)
         })
+        codeArea.isEditable = false
+        codeArea.lineWrap = false
+        codeArea.font = JTextField().font
+        codePanel.add(JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 2)).apply {
+            add(JLabel("Language"))
+            add(codeLanguageBox)
+            add(JButton("Copy").apply {
+                addActionListener { copyCode() }
+            })
+            add(codeStatus)
+        }, BorderLayout.NORTH)
+        codePanel.add(JScrollPane(codeArea), BorderLayout.CENTER)
+        tabs.addTab("Code", codePanel)
+        codeLanguageBox.addActionListener { refreshCode() }
+        tabs.addChangeListener {
+            if (tabs.selectedComponent === codePanel) refreshCode()
+        }
         bodyModeBox.addActionListener {
             updateBodyCard()
         }
@@ -201,6 +226,23 @@ class RequestEditorPanel(
         add(tabs, BorderLayout.CENTER)
         border = BorderFactory.createEmptyBorder(4, 4, 4, 4)
         installVariableCompletion()
+    }
+
+    /** Regenerates the Code tab from the latest request fields. */
+    fun refreshCode() {
+        val language = CodegenLanguage.values()[codeLanguageBox.selectedIndex.coerceAtLeast(0)]
+        codeArea.text = runCatching { codeProvider?.invoke(language).orEmpty() }
+            .getOrElse { "Unable to generate a snippet for this request." }
+        codeArea.caretPosition = 0
+        codeStatus.text = ""
+    }
+
+    private fun copyCode() {
+        if (codeArea.text.isBlank()) refreshCode()
+        if (codeArea.text.isBlank()) return
+        java.awt.Toolkit.getDefaultToolkit().systemClipboard
+            .setContents(java.awt.datatransfer.StringSelection(codeArea.text), null)
+        codeStatus.text = "Copied"
     }
 
     /** Leaves rename mode and shows the plain title, e.g. after Ctrl+S. */
@@ -267,6 +309,7 @@ class RequestEditorPanel(
             true -> 1
             false -> 2
         }
+        if (codePanel.isVisible) refreshCode()
     }
 
     fun readInto(request: AstraRequest): AstraRequest {
