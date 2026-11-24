@@ -62,6 +62,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private val gson = Gson()
     private var refreshingEnvironments = false
     private var syncingFromBus = false
+    private var starredOnly = false
+    private var hoveredRow = -1
 
     init {
         add(buildToolbar(), BorderLayout.NORTH)
@@ -214,7 +216,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         }
         add(JButton("Manage \u25BE").apply {
             addActionListener {
-                showMenu(this, listOf(
+                val menu = JPopupMenu()
+                listOf(
                     "Environments..." to ::editEnvironments,
                     "Globals..." to ::editGlobals,
                     "Settings..." to ::editSettings,
@@ -223,7 +226,17 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                         notify("Cookies cleared")
                     },
                     "Reset Workspace..." to ::resetWorkspace,
-                ))
+                ).forEach { (label, action) ->
+                    menu.add(javax.swing.JMenuItem(label).apply { addActionListener { action() } })
+                }
+                menu.addSeparator()
+                menu.add(javax.swing.JCheckBoxMenuItem("Only Starred Collections", starredOnly).apply {
+                    addActionListener {
+                        starredOnly = isSelected
+                        refreshTree()
+                    }
+                })
+                menu.show(this, 0, height)
             }
         })
         add(JButton("Import \u25BE").apply {
@@ -280,6 +293,21 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
 
             override fun mouseReleased(e: MouseEvent) = maybeShowPopup(e)
 
+            override fun mouseClicked(e: MouseEvent) {
+                if (e.button != MouseEvent.BUTTON1) return
+                val row = tree.getRowForLocation(e.x, e.y)
+                if (row < 0 || !starHit(row, e.x)) return
+                toggleStar(row)
+                e.consume()
+            }
+
+            override fun mouseExited(e: MouseEvent) {
+                val previous = hoveredRow
+                if (previous < 0) return
+                hoveredRow = -1
+                tree.getRowBounds(previous)?.let { tree.repaint(it) }
+            }
+
             private fun maybeShowPopup(e: MouseEvent) {
                 // Left clicks belong to the tree (select, expand/collapse); only the platform
                 // popup trigger opens the action menu. Check both press and release because
@@ -293,6 +321,23 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 }
                 showCollectionPopup(e.x, e.y)
                 e.consume()
+            }
+        })
+        tree.addMouseMotionListener(object : MouseAdapter() {
+            override fun mouseMoved(e: MouseEvent) {
+                val row = tree.getRowForLocation(e.x, e.y)
+                val node = if (row >= 0) {
+                    tree.getPathForRow(row)?.lastPathComponent as? DefaultMutableTreeNode
+                } else {
+                    null
+                }
+                val collectionRow = if ((node?.userObject as? Node)?.value is RequestCollection) row else -1
+                if (collectionRow == hoveredRow) return
+                val previous = hoveredRow
+                hoveredRow = collectionRow
+                listOf(previous, collectionRow).filter { it >= 0 }.forEach { target ->
+                    tree.getRowBounds(target)?.let { tree.repaint(it) }
+                }
             }
         })
         panel.add(JBScrollPane(tree), BorderLayout.CENTER)
@@ -356,6 +401,19 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private inner class NodeRenderer : JPanel(BorderLayout()), javax.swing.tree.TreeCellRenderer {
         private val label = JLabel()
         private val dots = JLabel("⋮")
+        private val star = JLabel().apply {
+            preferredSize = java.awt.Dimension(18, 18)
+            horizontalAlignment = javax.swing.SwingConstants.CENTER
+            font = font.deriveFont(font.size + 2f)
+            border = javax.swing.BorderFactory.createEmptyBorder(0, 6, 0, 0)
+            isOpaque = false
+        }
+        private val right = JPanel().apply {
+            isOpaque = false
+            layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.X_AXIS)
+            add(star)
+            add(dots)
+        }
         private var extraWidth = 0
         private var measuringRowBounds = false
 
@@ -368,8 +426,11 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             dots.font = dots.font.deriveFont(java.awt.Font.BOLD, dots.font.size + 1f)
             dots.border = javax.swing.BorderFactory.createEmptyBorder(0, 8, 0, 6)
             add(label, BorderLayout.WEST)
-            add(dots, BorderLayout.EAST)
+            add(right, BorderLayout.EAST)
         }
+
+        /** Width of the star / dots hit area, both right-aligned. */
+        fun rightWidths(): Pair<Int, Int> = star.preferredSize.width to dots.preferredSize.width
 
         override fun getPreferredSize(): java.awt.Dimension {
             val size = super.getPreferredSize()
@@ -392,10 +453,19 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 return this
             }
             val nodeValue = ((value as? DefaultMutableTreeNode)?.userObject as? Node)?.value
+            star.text = ""
             when (nodeValue) {
                 is RequestCollection -> {
                     label.icon = AstraIcons.collection
                     label.text = escapeHtml(nodeValue.name)
+                    if (nodeValue.starred || row == hoveredRow) {
+                        star.text = if (nodeValue.starred) "★" else "☆"
+                        star.foreground = if (nodeValue.starred) {
+                            java.awt.Color(0xF2A93B)
+                        } else {
+                            com.intellij.ui.JBColor.GRAY
+                        }
+                    }
                 }
                 is RequestFolder -> {
                     label.icon = AstraIcons.folder
@@ -484,6 +554,22 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private fun selectedNodeValue(): Any? =
         ((tree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.userObject as? Node)?.value
 
+    /** True when [x] falls on the star affordance of the collection row. */
+    private fun starHit(row: Int, x: Int): Boolean {
+        val bounds = tree.getRowBounds(row) ?: return false
+        val renderer = tree.cellRenderer as? NodeRenderer ?: return false
+        val (starWidth, dotsWidth) = renderer.rightWidths()
+        val end = bounds.x + bounds.width - dotsWidth
+        return x >= end - starWidth && x <= end
+    }
+
+    private fun toggleStar(row: Int) {
+        val node = tree.getPathForRow(row)?.lastPathComponent as? DefaultMutableTreeNode ?: return
+        val collection = (node.userObject as? Node)?.value as? RequestCollection ?: return
+        collection.starred = !collection.starred
+        structureChanged()
+    }
+
     private fun showCollectionPopup(x: Int, y: Int) {
         val node = tree.lastSelectedPathComponent as? DefaultMutableTreeNode
         val value = (node?.userObject as? Node)?.value
@@ -504,6 +590,10 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 menu.addSeparator()
                 item("Run Collection", AstraIcons.run, RUN_STROKE) { runRequests(value.name, value.allRequests()) }
                 item("Edit Variables...") { editVariables(value) }
+                item(if (value.starred) "Unstar Collection" else "Star Collection") {
+                    value.starred = !value.starred
+                    structureChanged()
+                }
                 menu.addSeparator()
                 item("Rename", AstraIcons.rename, RENAME_STROKE) { renameValue(value) }
                 item("Duplicate", AstraIcons.duplicate, DUPLICATE_STROKE) { duplicateValue(value) }
@@ -658,7 +748,10 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             folder.folders.forEach { appendFolder(folderNode, it) }
         }
 
-        workspace.data.collections.forEach { collection ->
+        val collections = workspace.data.collections
+            .let { all -> if (starredOnly) all.filter { it.starred } else all }
+            .sortedByDescending { it.starred }
+        collections.forEach { collection ->
             val collectionNode = DefaultMutableTreeNode(Node(collection.name, collection))
             root.add(collectionNode)
             collection.folders.forEach { appendFolder(collectionNode, it) }

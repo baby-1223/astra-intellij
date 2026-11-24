@@ -50,6 +50,7 @@ data class RequestCollection(
     var requests: MutableList<AstraRequest> = mutableListOf(),
     var variables: MutableMap<String, String> = mutableMapOf(),
     var disabledVariables: MutableSet<String> = mutableSetOf(),
+    var starred: Boolean = false,
 )
 
 /** True when this collection or any of its folders owns [request] (identity comparison). */

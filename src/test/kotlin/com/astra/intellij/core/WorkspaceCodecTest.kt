@@ -27,6 +27,18 @@ class WorkspaceCodecTest {
     }
 
     @Test
+    fun `collection star survives a round trip and defaults to false for old data`() {
+        val data = WorkspaceData(
+            collections = mutableListOf(RequestCollection(name = "Pinned", starred = true)),
+        )
+
+        assertTrue(codec.deserialize(codec.serialize(data)).collections.single().starred)
+
+        val legacy = """{"collections":[{"name":"Old"}]}"""
+        assertEquals(false, codec.deserialize(legacy).collections.single().starred)
+    }
+
+    @Test
     fun `deep copy uses json and does not share nested mutable state`() {
         val original = WorkspaceData(
             collections = mutableListOf(
