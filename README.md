@@ -11,7 +11,9 @@ A local-first API client for JetBrains IDEs. Design, send, and automate HTTP req
 - **Response viewer** — body, headers, cookies, test results, and per-request history with status, timing, and size.
 - **Environments and globals** — variables resolved at send time (`{{variable}}` syntax), switchable per environment.
 - **Collection and folder runner** — iterate a collection or folder with configurable iteration count, delay, and data files (CSV / JSON), with a Postman-style results table.
-- **Import and export** — Postman collections, environments and data dumps, Insomnia collections, OpenAPI / Swagger JSON, and cURL commands.
+- **Import and export** — Postman collections, environments and data dumps, Insomnia collections, OpenAPI / Swagger (JSON and YAML), `.http` / `.rest` files, and cURL commands.
+- **IDE integration** — import HTTP and OpenAPI files from the editor, generate requests from Spring controllers, and load variables from `application.yml`.
+- **Mock server** — serve generated responses for a collection or OpenAPI document on a local port.
 - **Starred collections** — star collections to pin them above the rest, and optionally show only starred items.
 - **Stability and data safety** — shared workspace schema with automatic migration, crash-safe unsaved drafts, large-response protection, and credentials kept in the system credential store.
 - **Local storage** — the workspace lives in the IDE configuration directory and is shared by every IDE window on the machine.
@@ -23,6 +25,14 @@ A local-first API client for JetBrains IDEs. Design, send, and automate HTTP req
 - **Credential store** — tokens, passwords, API keys, OAuth client secrets and refresh tokens are stored in the OS credential store; `astra.xml` only contains `secure:` placeholders.
 - **Large responses** — previews are capped at 1.5M characters with an explicit truncation notice, while **Save…** exports the complete response body.
 - **Charset detection** — responses are decoded from the declared charset, BOM or byte content (UTF-8 / UTF-16 / GB18030 and other JVM charsets), so non-UTF-8 endpoints display correctly.
+
+## What's new in 0.3.13
+
+- **IDE integration** — right-click a `.http` / `.rest` or OpenAPI document (JSON or YAML) and choose **Import into Astra**; right-click a Spring controller and choose **Generate Astra Requests** to create one request per mapping, including path variables, query parameters, headers, and DTO request bodies.
+- **Spring configuration** — **Load Variables into Astra** turns `application.yml` / `application.properties` into an environment and derives `baseUrl` from `server.port` and `server.servlet.context-path`. Generating requests from a controller does this automatically.
+- **Mock server** — start a local server from **Manage → Mock Server…** using a collection or an OpenAPI document. Documented endpoints use their examples or schema; undocumented endpoints get plausible generated payloads. Includes route and request logs, configurable port and delay, and CORS headers.
+- **Star icon** — the collection star is now a vector five-pointed star drawn with Java2D instead of a font glyph, so it renders consistently on every platform.
+- **Tests** — new unit tests cover HTTP file parsing, Spring controller and configuration parsing, OpenAPI YAML import, mock data generation, the mock HTTP server, and legacy workspace normalization.
 
 ## What's new in 0.3.12
 
@@ -61,9 +71,11 @@ Search for **Astra** in `Settings → Plugins → Marketplace`, or install from 
 ## Getting started
 
 1. Open the **Astra** tool window on the right side of the IDE.
-2. Create a collection, then add a request (or import a Postman collection / OpenAPI spec / cURL command).
+2. Create a collection, then add a request (or import a Postman collection / OpenAPI spec / `.http` file / cURL command).
 3. Enter the URL and click **Send**.
 4. Inspect the response, or run the whole collection with the collection runner.
+
+Working from Java or Kotlin source, right-click a Spring controller and choose **Generate Astra Requests**; Astra creates the collection and loads the application's `application.yml` variables at the same time.
 
 ## Keyboard shortcuts
 

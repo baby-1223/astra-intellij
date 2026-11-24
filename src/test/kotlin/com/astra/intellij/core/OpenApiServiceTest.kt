@@ -58,6 +58,33 @@ class OpenApiServiceTest {
     }
 
     @Test
+    fun `parses openapi yaml documents`() {
+        val imported = service.parse(
+            """
+            openapi: 3.0.0
+            info:
+              title: YAML Pets
+              version: '1'
+            servers:
+              - url: https://yaml.example.com
+            paths:
+              /pets:
+                get:
+                  summary: List pets
+                  responses:
+                    '200':
+                      description: ok
+            """.trimIndent(),
+        )
+
+        assertEquals("YAML Pets", imported.collection.name)
+        assertEquals("https://yaml.example.com", imported.environment?.variables?.get("baseUrl"))
+        val request = imported.collection.requests.single()
+        assertEquals("List pets", request.name)
+        assertEquals("{{baseUrl}}/pets", request.url)
+    }
+
+    @Test
     fun `exports openapi json with paths parameters and security`() {
         val collection = RequestCollection(
             name = "Users",

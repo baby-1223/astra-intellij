@@ -72,6 +72,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private val archive = ArchiveService()
     private val gson = Gson()
     private var refreshingEnvironments = false
+    private var mockDialog: MockServerDialog? = null
     private var syncingFromBus = false
     private var starredOnly = false
     private var hoveredRow = -1
@@ -289,6 +290,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                     "Globals..." to ::editGlobals,
                     "Settings..." to ::editSettings,
                     "Cookies..." to { CookiesDialog(project).show() },
+                    "Mock Server..." to ::openMockServer,
                     "Reset Workspace..." to ::resetWorkspace,
                 ).forEach { (label, action) ->
                     menu.add(javax.swing.JMenuItem(label).apply { addActionListener { action() } })
@@ -310,7 +312,9 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                     "Postman Environment" to ::importPostmanEnvironment,
                     "Postman Data Dump (.zip)" to ::importPostmanDataDump,
                     "Insomnia (.json)" to ::importInsomnia,
-                    "OpenAPI / Swagger JSON" to ::importOpenApi,
+                    "OpenAPI / Swagger (JSON or YAML)" to ::importOpenApi,
+                    ".http / .rest File" to ::importHttpFile,
+                    "Spring application.yml" to ::importSpringConfig,
                     "Astra Workspace (.json)" to ::importWorkspace,
                     "cURL Command" to { (currentSession() as? RequestSessionPanel)?.importCurl() },
                 ))
@@ -500,9 +504,8 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         private val label = JLabel()
         private val dots = JLabel("⋮")
         private val star = JLabel().apply {
-            preferredSize = java.awt.Dimension(18, 18)
+            preferredSize = com.intellij.util.ui.JBUI.size(24, 18)
             horizontalAlignment = javax.swing.SwingConstants.CENTER
-            font = font.deriveFont(font.size + 2f)
             border = javax.swing.BorderFactory.createEmptyBorder(0, 6, 0, 0)
             isOpaque = false
         }
@@ -551,18 +554,15 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 return this
             }
             val nodeValue = ((value as? DefaultMutableTreeNode)?.userObject as? Node)?.value
-            star.text = ""
+            star.icon = null
+            star.toolTipText = null
             when (nodeValue) {
                 is RequestCollection -> {
                     label.icon = AstraIcons.collection
                     label.text = escapeHtml(nodeValue.name)
                     if (nodeValue.starred || row == hoveredRow) {
-                        star.text = if (nodeValue.starred) "★" else "☆"
-                        star.foreground = if (nodeValue.starred) {
-                            java.awt.Color(0xF2A93B)
-                        } else {
-                            com.intellij.ui.JBColor.GRAY
-                        }
+                        star.icon = if (nodeValue.starred) AstraIcons.starFilled else AstraIcons.starOutline
+                        star.toolTipText = if (nodeValue.starred) "Unstar collection" else "Star collection"
                     }
                 }
                 is RequestFolder -> {
@@ -696,7 +696,10 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 item("Edit Scripts...") {
                     editParentScripts(value.name, value.preRequest, value.postResponse)
                 }
-                item(if (value.starred) "Unstar Collection" else "Star Collection") {
+                item(
+                    if (value.starred) "Unstar Collection" else "Star Collection",
+                    if (value.starred) AstraIcons.starOutline else AstraIcons.starFilled,
+                ) {
                     value.starred = !value.starred
                     structureChanged()
                 }
@@ -1188,7 +1191,14 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     }
 
     private fun importOpenApi() {
-        val file = chooseJsonFile("Import OpenAPI / Swagger JSON") ?: return
+        val file = AstraFileChooser.open(
+            this,
+            "Import OpenAPI / Swagger",
+            "OpenAPI / Swagger (json, yaml, yml)",
+            "json",
+            "yaml",
+            "yml",
+        ) ?: return
         val text = readFile(file) ?: return
         try {
             val imported = openApi.parse(text)
@@ -1209,8 +1219,53 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             refreshTree(firstRequestOf(collection))
             notify("Imported $count operation(s) into \"${collection.name}\"")
         } catch (error: Exception) {
-            Messages.showErrorDialog(project, error.message ?: "Invalid OpenAPI JSON", "Import failed")
+            Messages.showErrorDialog(project, error.message ?: "Invalid OpenAPI document", "Import failed")
         }
+    }
+
+    private fun importHttpFile() {
+        val file = AstraFileChooser.open(
+            this,
+            "Import .http / .rest File",
+            "HTTP files (http, rest)",
+            "http",
+            "rest",
+        ) ?: return
+        val text = readFile(file) ?: return
+        try {
+            val message = AstraIntegration.importHttpFile(project, workspace, text, file.name)
+            refreshTree()
+            notify(message)
+        } catch (error: Exception) {
+            Messages.showErrorDialog(project, error.message ?: "Invalid HTTP file", "Import failed")
+        }
+    }
+
+    private fun importSpringConfig() {
+        val file = AstraFileChooser.open(
+            this,
+            "Import Spring Configuration",
+            "Spring configuration (yml, yaml, properties)",
+            "yml",
+            "yaml",
+            "properties",
+        ) ?: return
+        try {
+            val message = AstraIntegration.importSpringConfig(project, workspace, file)
+            refreshEnvironments()
+            notify(message)
+        } catch (error: Exception) {
+            Messages.showErrorDialog(project, error.message ?: "Invalid configuration file", "Import failed")
+        }
+    }
+
+    private fun openMockServer() {
+        val existing = mockDialog
+        if (existing != null && existing.isShowing) {
+            existing.toFront()
+            return
+        }
+        mockDialog = MockServerDialog(project, workspace).also { it.show() }
     }
 
     private fun exportPostmanCollection() {

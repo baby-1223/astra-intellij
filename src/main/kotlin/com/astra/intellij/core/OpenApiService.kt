@@ -26,8 +26,9 @@ data class ApiImport(
 class OpenApiService {
     private val gson = GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create()
 
+    /** Accepts OpenAPI / Swagger JSON and YAML documents. */
     fun parse(json: String): ApiImport {
-        val root = JsonParser.parseString(json).asJsonObject
+        val root = JsonParser.parseString(YamlSupport.normalizeToJson(json)).asJsonObject
         val title = root.obj("info")?.string("title")?.ifBlank { null } ?: "Imported API"
         val collection = RequestCollection(name = title)
         val server = resolveServer(root)

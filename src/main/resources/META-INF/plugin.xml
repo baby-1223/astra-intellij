@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.astra.apiclient</id>
     <name>Astra</name>
-    <version>0.3.12</version>
+    <version>0.3.13</version>
     <vendor url="https://github.com/baby-1223/astra-intellij">APost</vendor>
 
     <icon>/icons/astra-plugin.svg</icon>
@@ -21,8 +21,10 @@
             <li><b>Environments</b>: named variable sets with <code>{{variable}}</code> substitution across URLs, headers, and bodies.</li>
             <li><b>Response viewer</b>: formatted body, headers, cookies, timing, and response size.</li>
             <li><b>Tests and history</b>: lightweight assertions on status, body, and time, plus post-response scripts that capture values into environments.</li>
-            <li><b>Collection runner</b>: iterate a collection or folder with data files, delays, per-iteration results, and CSV/JSON export.</li>
-            <li><b>Import and export</b>: Postman collections, environments and data dumps, Insomnia requests and full exports, OpenAPI 3.0, cURL commands, and native Astra workspaces.</li>
+            <li><b>Collection runner</b>: iterate a collection or folder with data files, delays, per-iteration results, and CSV/JSON/JUnit XML export for CI.</li>
+            <li><b>Import and export</b>: Postman collections, environments and data dumps, Insomnia requests and full exports, OpenAPI 3.0 (JSON and YAML), cURL commands, and native Astra workspaces.</li>
+            <li><b>IDE integration</b>: import <code>.http</code> / <code>.rest</code> files and OpenAPI documents, generate requests from Spring controllers, and load variables from <code>application.yml</code>.</li>
+            <li><b>Mock server</b>: serve generated responses for a collection or an OpenAPI document on a local port.</li>
         </ul>
 
         <h3>Designed for privacy</h3>
@@ -52,6 +54,17 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.3.13</h3>
+        <ul>
+            <li>Collection and folder runner reports can be exported as JUnit XML for CI pipelines.</li>
+            <li>Import <code>.http</code> / <code>.rest</code> files and OpenAPI YAML documents.</li>
+            <li>Generate Astra requests from Spring controllers, including path variables, query parameters, headers, and DTO request bodies.</li>
+            <li>Load variables from <code>application.yml</code> / <code>application.properties</code>, deriving <code>baseUrl</code> from the server port and context path.</li>
+            <li>Copy requests as cURL, Python, JavaScript, Go, Java, or IDEA HTTP Client snippets.</li>
+            <li>Import variables by pasting <code>.env</code> / CSV text and copy any scope as <code>.env</code>.</li>
+            <li>Local mock server with generated sample payloads for documented and undocumented endpoints.</li>
+            <li>The collection star is now a drawn five-pointed star icon, replacing the text glyph.</li>
+        </ul>
         <h3>0.1.0</h3>
         <ul>
             <li>Initial release: collections, folders, environments, HTTP requests, response viewer, tests, history.</li>
@@ -68,4 +81,28 @@
                     factoryClass="com.astra.intellij.ui.AstraToolWindowFactory"
                     icon="/icons/astra.svg"/>
     </extensions>
+
+    <actions>
+        <action id="Astra.ImportApiFile"
+                class="com.astra.intellij.ui.ImportApiFileAction"
+                text="Import into Astra"
+                description="Import this .http / .rest / OpenAPI file as an Astra collection">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+        <action id="Astra.GenerateSpringRequests"
+                class="com.astra.intellij.ui.GenerateSpringRequestsAction"
+                text="Generate Astra Requests"
+                description="Create Astra requests for every mapping in this Spring controller">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+        <action id="Astra.LoadSpringConfig"
+                class="com.astra.intellij.ui.LoadSpringConfigAction"
+                text="Load Variables into Astra"
+                description="Create an Astra environment from this Spring configuration file">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>

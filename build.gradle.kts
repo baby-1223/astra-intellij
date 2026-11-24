@@ -7,7 +7,7 @@ import org.gradle.api.tasks.testing.Test
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
 group = "com.astra"
-version = "0.3.12"
+version = "0.3.13"
 
 repositories {
     mavenCentral()
@@ -24,6 +24,8 @@ dependencies {
     }
     implementation("com.google.code.gson:gson:2.11.0")
     implementation("org.mozilla:rhino:1.7.15")
+    // Spring application.yml and OpenAPI YAML files are parsed with a real YAML reader.
+    implementation("org.yaml:snakeyaml:2.2")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.3")
 }
