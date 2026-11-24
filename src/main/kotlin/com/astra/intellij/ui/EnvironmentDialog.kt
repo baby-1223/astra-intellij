@@ -1,11 +1,14 @@
 package com.astra.intellij.ui
 
 import com.astra.intellij.model.AstraEnvironment
+import com.astra.intellij.core.VariableTextService
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.datatransfer.StringSelection
 import java.awt.event.ActionEvent
 import javax.swing.AbstractAction
 import javax.swing.Action
@@ -92,6 +95,12 @@ class EnvironmentDialog(
                         if (row >= 0) tableModel.removeRow(table.convertRowIndexToModel(row))
                     }
                 })
+                add(JButton("Import .env / CSV").apply {
+                    addActionListener { importVariables() }
+                })
+                add(JButton("Copy .env").apply {
+                    addActionListener { copyDotEnv() }
+                })
             }, BorderLayout.SOUTH)
         }
         // Use the platform splitter so the divider matches the rest of the Astra dialogs.
@@ -149,6 +158,37 @@ class EnvironmentDialog(
             val key = tableModel.getValueAt(row, 0)?.toString()?.trim().orEmpty()
             if (key.isNotEmpty()) env.variables[key] = tableModel.getValueAt(row, 1)?.toString().orEmpty()
         }
+    }
+
+    private fun importVariables() {
+        val dialog = VariableImportDialog(contentPane)
+        if (!dialog.showAndGet()) return
+        if (table.isEditing) table.cellEditor.stopCellEditing()
+        dialog.result.forEach { (key, value) ->
+            var found = -1
+            for (row in 0 until tableModel.rowCount) {
+                if (tableModel.getValueAt(row, 0)?.toString()?.trim() == key) {
+                    found = row
+                    break
+                }
+            }
+            if (found >= 0) {
+                tableModel.setValueAt(value, found, 1)
+            } else {
+                tableModel.addRow(arrayOf(key, value))
+            }
+        }
+    }
+
+    private fun copyDotEnv() {
+        if (table.isEditing) table.cellEditor.stopCellEditing()
+        val values = linkedMapOf<String, String>()
+        for (row in 0 until tableModel.rowCount) {
+            val key = tableModel.getValueAt(row, 0)?.toString()?.trim().orEmpty()
+            if (key.isEmpty()) continue
+            values[key] = tableModel.getValueAt(row, 1)?.toString().orEmpty()
+        }
+        CopyPasteManager.getInstance().setContents(StringSelection(VariableTextService.toDotEnv(values)))
     }
 
     private fun loadVariables(env: AstraEnvironment) {

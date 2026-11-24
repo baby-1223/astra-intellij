@@ -7,7 +7,9 @@ import com.astra.intellij.model.KeyValue
 import com.astra.intellij.model.RequestCollection
 import com.astra.intellij.model.RequestFolder
 import com.astra.intellij.model.containsRequest
+import com.astra.intellij.model.effectiveAuth
 import com.astra.intellij.model.folderPathTo
+import com.astra.intellij.model.inheritedScripts
 import com.google.gson.JsonParser
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -470,17 +472,25 @@ class PostmanServiceTest {
         val own = folder.requests.first { it.name == "Own" }
         val root = collection.requests.single()
 
-        assertEquals("bearer", inherited.auth.type)
-        assertEquals("ft", inherited.auth.token)
+        // Scoped auth and scripts stay on the collection/folder instead of being copied into each
+        // request, so the import round-trips Postman's inheritance exactly.
+        assertEquals("bearer", folder.auth.type)
+        assertEquals("ft", folder.auth.token)
+        assertEquals("basic", collection.auth.type)
+        assertEquals("root", collection.auth.username)
+        assertEquals("inherit", inherited.auth.type)
+        val inheritedAuth = collection.effectiveAuth(inherited)!!
+        assertEquals("bearer", inheritedAuth.type)
+        assertEquals("ft", inheritedAuth.token)
         assertEquals(
             listOf("pm.variables.set('c','1');", "pm.variables.set('f','1');"),
-            inherited.preRequest,
+            collection.inheritedScripts(inherited, preRequest = true),
         )
         assertEquals("apikey", own.auth.type)
         assertEquals("k", own.auth.apiKeyName)
-        assertEquals("basic", root.auth.type)
-        assertEquals("root", root.auth.username)
-        assertEquals(listOf("pm.variables.set('c','1');"), root.preRequest)
+        assertEquals("inherit", root.auth.type)
+        assertEquals("basic", collection.effectiveAuth(root)!!.type)
+        assertEquals(listOf("pm.variables.set('c','1');"), collection.inheritedScripts(root, preRequest = true))
     }
 
     @Test

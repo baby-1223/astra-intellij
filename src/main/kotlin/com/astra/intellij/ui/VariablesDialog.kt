@@ -1,9 +1,12 @@
 package com.astra.intellij.ui
 
+import com.astra.intellij.core.VariableTextService
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.FlowLayout
+import java.awt.datatransfer.StringSelection
 import javax.swing.DefaultCellEditor
 import javax.swing.JButton
 import javax.swing.JComponent
@@ -62,8 +65,50 @@ class VariablesDialog(
                     if (row >= 0) tableModel.removeRow(table.convertRowIndexToModel(row))
                 }
             })
+            add(JButton("Import .env / CSV").apply {
+                addActionListener { importVariables() }
+            })
+            add(JButton("Copy .env").apply {
+                addActionListener { copyDotEnv() }
+            })
         }, BorderLayout.SOUTH)
         preferredSize = JBUI.size(560, 320)
+    }
+
+    private fun importVariables() {
+        val dialog = VariableImportDialog(this.contentPane)
+        if (!dialog.showAndGet()) return
+        if (table.isEditing) table.cellEditor.stopCellEditing()
+        dialog.result.forEach { (key, value) ->
+            var found = -1
+            for (row in 0 until tableModel.rowCount) {
+                if (tableModel.getValueAt(row, 1)?.toString()?.trim() == key) {
+                    found = row
+                    break
+                }
+            }
+            if (found >= 0) {
+                tableModel.setValueAt(true, found, 0)
+                tableModel.setValueAt(value, found, 2)
+            } else {
+                val trailingBlank = tableModel.rowCount > 0 &&
+                    tableModel.getValueAt(tableModel.rowCount - 1, 1)?.toString().isNullOrBlank()
+                val insertAt = if (trailingBlank) tableModel.rowCount - 1 else tableModel.rowCount
+                tableModel.insertRow(insertAt, arrayOf<Any>(true, key, value))
+            }
+        }
+    }
+
+    private fun copyDotEnv() {
+        if (table.isEditing) table.cellEditor.stopCellEditing()
+        val enabled = linkedMapOf<String, String>()
+        for (row in 0 until tableModel.rowCount) {
+            val key = tableModel.getValueAt(row, 1)?.toString()?.trim().orEmpty()
+            if (key.isEmpty()) continue
+            if (tableModel.getValueAt(row, 0) as? Boolean != true) continue
+            enabled[key] = tableModel.getValueAt(row, 2)?.toString().orEmpty()
+        }
+        CopyPasteManager.getInstance().setContents(StringSelection(VariableTextService.toDotEnv(enabled)))
     }
 
     override fun doOKAction() {

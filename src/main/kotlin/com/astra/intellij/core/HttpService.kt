@@ -5,6 +5,10 @@ import com.astra.intellij.model.AstraSettings
 import com.astra.intellij.model.CookieData
 import com.astra.intellij.model.HttpResult
 import com.astra.intellij.model.KeyValue
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpClient
@@ -14,13 +18,37 @@ import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.util.Base64
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.atomic.AtomicBoolean
 
-class HttpCall internal constructor(
-    val future: CompletableFuture<HttpResult>,
-    private val exchange: CompletableFuture<*>,
-) {
+/** A server-sent event delivered while a stream is open. */
+data class SseEvent(
+    val event: String = "message",
+    val data: String = "",
+    val id: String? = null,
+    val timeMs: Long = System.currentTimeMillis(),
+)
+
+/** Handle to a running event stream; [close] stops reading and releases the connection. */
+class SseCall internal constructor(private val closer: () -> Unit) {
+    fun close() = closer()
+}
+
+class HttpCall internal constructor(val future: CompletableFuture<HttpResult>) {
+    @Volatile
+    private var exchange: CompletableFuture<*>? = null
+
+    @Volatile
+    private var cancelled = false
+
+    /** The retry loop swaps the in-flight attempt; cancel the newest one too. */
+    internal fun attach(next: CompletableFuture<*>) {
+        exchange = next
+        if (cancelled) next.cancel(true)
+    }
+
     fun cancel() {
-        exchange.cancel(true)
+        cancelled = true
+        exchange?.cancel(true)
         future.cancel(true)
     }
 }
@@ -34,20 +62,41 @@ class HttpService(
         settings: AstraSettings = AstraSettings(),
     ): HttpCall {
         val startedAt = System.nanoTime()
-        val httpRequest = createRequest(request, vars, settings)
-        val exchange = clientProvider(settings).sendAsync(httpRequest, HttpResponse.BodyHandlers.ofByteArray())
-        val future = exchange.thenApply { response ->
-            val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
-            HttpResult(
-                status = response.statusCode(),
-                statusText = reasonPhrase(response.statusCode()),
-                headers = response.headers().map().mapValues { (_, values) -> values.toList() },
-                body = response.body(),
-                elapsedMs = elapsedMs,
-                cookies = parseCookies(response.headers().allValues("set-cookie")),
-            )
+        val effective = effectiveSettings(request, settings)
+        val httpRequest = createRequest(request, vars, effective)
+        val result = CompletableFuture<HttpResult>()
+        val call = HttpCall(result)
+        val attempts = request.retries.coerceIn(0, 10) + 1
+
+        fun attempt(number: Int) {
+            val exchange = clientProvider(effective)
+                .sendAsync(httpRequest, HttpResponse.BodyHandlers.ofByteArray())
+            call.attach(exchange)
+            exchange.whenComplete { response, error ->
+                if (result.isCancelled) return@whenComplete
+                if (error == null) {
+                    val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+                    result.complete(
+                        HttpResult(
+                            status = response.statusCode(),
+                            statusText = reasonPhrase(response.statusCode()),
+                            headers = response.headers().map().mapValues { (_, values) -> values.toList() },
+                            body = response.body(),
+                            elapsedMs = elapsedMs,
+                            cookies = parseCookies(response.headers().allValues("set-cookie")),
+                        ),
+                    )
+                } else if (number < attempts) {
+                    // Retry transport failures only: retrying a completed 5xx could duplicate writes.
+                    CompletableFuture.delayedExecutor(300, java.util.concurrent.TimeUnit.MILLISECONDS)
+                        .execute { if (!result.isCancelled) attempt(number + 1) }
+                } else {
+                    result.completeExceptionally(error)
+                }
+            }
         }
-        return HttpCall(future, exchange)
+        attempt(1)
+        return call
     }
 
     /** Sends a request and waits for the response; call from a background thread. */
@@ -56,13 +105,20 @@ class HttpService(
         vars: Map<String, String> = emptyMap(),
         settings: AstraSettings = AstraSettings(),
     ): HttpResult = try {
+        val attempts = request.retries.coerceIn(0, 10) + 1
         send(request, vars, settings).future.get(
-            settings.timeoutSeconds.toLong() + 10,
+            (effectiveSettings(request, settings).timeoutSeconds.toLong() + 10) * attempts,
             java.util.concurrent.TimeUnit.SECONDS,
         )
     } catch (error: java.util.concurrent.ExecutionException) {
         throw error.cause ?: error
     }
+
+    /** Applies per-request overrides on top of the global settings. */
+    private fun effectiveSettings(request: AstraRequest, settings: AstraSettings): AstraSettings = settings.copy(
+        timeoutSeconds = request.timeoutSeconds.takeIf { it > 0 } ?: settings.timeoutSeconds,
+        followRedirects = request.followRedirects ?: settings.followRedirects,
+    )
 
     private fun createRequest(request: AstraRequest, vars: Map<String, String>, settings: AstraSettings): HttpRequest {
         val method = VariableResolver.resolve(request.method, vars).uppercase()
@@ -87,13 +143,54 @@ class HttpService(
                 "Content-Type",
                 when (request.bodyMode) {
                     "json" -> "application/json"
+                    "graphql" -> "application/json"
+                    "grpc" -> "application/grpc-web+${if (request.grpcBinary) "proto" else "json"}"
                     "urlencoded" -> "application/x-www-form-urlencoded"
                     "form-data" -> "multipart/form-data; boundary=$boundary"
                     else -> "text/plain; charset=utf-8"
                 },
             )
         }
+        if (request.bodyMode == "grpc") {
+            if (request.headers.none { it.enabled && it.key.equals("x-grpc-web", ignoreCase = true) }) {
+                builder.header("x-grpc-web", "1")
+            }
+            if (request.headers.none { it.enabled && it.key.equals("Accept", ignoreCase = true) }) {
+                builder.header("Accept", "application/grpc-web+proto")
+            }
+        }
 
+        applyAuth(builder, request, vars)
+
+        val body = if (!hasBody) {
+            HttpRequest.BodyPublishers.noBody()
+        } else when (request.bodyMode) {
+            "urlencoded" -> HttpRequest.BodyPublishers.ofString(
+                request.formFields
+                    .filter { it.enabled && it.key.isNotBlank() }
+                    .joinToString("&") {
+                        "${encodeQueryComponent(VariableResolver.resolve(it.key, vars))}=" +
+                            encodeQueryComponent(VariableResolver.resolve(it.value, vars))
+                    },
+                StandardCharsets.UTF_8,
+            )
+            "form-data" -> HttpRequest.BodyPublishers.ofByteArray(
+                multipartBody(request.formFields, boundary, vars),
+            )
+            "graphql" -> HttpRequest.BodyPublishers.ofByteArray(graphqlBody(request, vars))
+            "grpc" -> HttpRequest.BodyPublishers.ofByteArray(
+                GrpcCodec.encode(GrpcCodec.payload(VariableResolver.resolve(request.grpcPayload, vars), request.grpcBinary)),
+            )
+            else -> HttpRequest.BodyPublishers.ofString(
+                VariableResolver.resolve(request.body, vars),
+                StandardCharsets.UTF_8,
+            )
+        }
+        return builder.method(method, body).build()
+    }
+
+    /** Applies the configured authorization headers; shared with the SSE stream request. */
+    private fun applyAuth(builder: HttpRequest.Builder, request: AstraRequest, vars: Map<String, String>) {
         when (request.auth.type.lowercase()) {
             "bearer" -> builder.header(
                 "Authorization",
@@ -113,29 +210,130 @@ class HttpService(
                     VariableResolver.resolve(request.auth.apiKeyValue, vars),
                 )
             }
+            "oauth2" -> {
+                val token = OAuth2Service.ensureToken(request.auth, vars)
+                if (token.isNotBlank()) builder.header("Authorization", "Bearer $token")
+            }
         }
+    }
 
-        val body = if (!hasBody) {
-            HttpRequest.BodyPublishers.noBody()
-        } else when (request.bodyMode) {
-            "urlencoded" -> HttpRequest.BodyPublishers.ofString(
-                request.formFields
-                    .filter { it.enabled && it.key.isNotBlank() }
-                    .joinToString("&") {
-                        "${encodeQueryComponent(VariableResolver.resolve(it.key, vars))}=" +
-                            encodeQueryComponent(VariableResolver.resolve(it.value, vars))
-                    },
-                StandardCharsets.UTF_8,
-            )
-            "form-data" -> HttpRequest.BodyPublishers.ofByteArray(
-                multipartBody(request.formFields, boundary, vars),
-            )
-            else -> HttpRequest.BodyPublishers.ofString(
-                VariableResolver.resolve(request.body, vars),
-                StandardCharsets.UTF_8,
+    /** GraphQL over HTTP: a JSON object with the query and an optional variables object. */
+    internal fun graphqlBody(request: AstraRequest, vars: Map<String, String>): ByteArray {
+        val query = VariableResolver.resolve(request.graphqlQuery, vars)
+        val rawVariables = VariableResolver.resolve(request.graphqlVars, vars).trim()
+        val payload = JsonObject().apply { addProperty("query", query) }
+        if (rawVariables.isNotEmpty()) {
+            val parsed = try {
+                JsonParser.parseString(rawVariables)
+            } catch (_: Exception) {
+                throw IllegalArgumentException("GraphQL variables are not valid JSON")
+            }
+            payload.add("variables", parsed)
+        }
+        return payload.toString().toByteArray(StandardCharsets.UTF_8)
+    }
+
+    /**
+     * Opens a `text/event-stream` connection and reports each event through [onEvent].
+     *
+     * Reading happens on a daemon thread so the IDE stays responsive; [SseCall.close] aborts it.
+     */
+    fun openEventStream(
+        request: AstraRequest,
+        vars: Map<String, String> = emptyMap(),
+        settings: AstraSettings = AstraSettings(),
+        onOpen: (HttpResult) -> Unit = {},
+        onEvent: (SseEvent) -> Unit,
+        onClosed: (String) -> Unit = {},
+        onError: (String) -> Unit = {},
+    ): SseCall {
+        val builder = HttpRequest.newBuilder()
+            .uri(URI.create(buildRequestUrl(request, vars)))
+            .header("Accept", "text/event-stream")
+            .header("Cache-Control", "no-cache")
+            .GET()
+        request.headers.filter { it.enabled && it.key.isNotBlank() }.forEach { header ->
+            builder.header(
+                VariableResolver.resolve(header.key, vars),
+                VariableResolver.resolve(header.value, vars),
             )
         }
-        return builder.method(method, body).build()
+        applyAuth(builder, request, vars)
+        val closed = AtomicBoolean(false)
+        val stream = java.util.concurrent.atomic.AtomicReference<java.io.InputStream?>()
+        val future = clientProvider(settings).sendAsync(builder.build(), HttpResponse.BodyHandlers.ofInputStream())
+        future.whenComplete { response, error ->
+            if (closed.get()) return@whenComplete
+            if (error != null) {
+                onError(error.cause?.message ?: error.message ?: "Event stream failed")
+                return@whenComplete
+            }
+            stream.set(response.body())
+            val headers = response.headers().map().mapValues { (_, values) -> values.toList() }
+            if (response.statusCode() !in 200..299) {
+                val errorBody = runCatching {
+                    response.body().use { it.readNBytes(256 * 1024).toString(StandardCharsets.UTF_8) }
+                }.getOrElse { "" }
+                onOpen(
+                    HttpResult(
+                        status = response.statusCode(),
+                        statusText = reasonPhrase(response.statusCode()),
+                        headers = headers,
+                        body = errorBody.toByteArray(StandardCharsets.UTF_8),
+                    ),
+                )
+                onClosed("HTTP ${response.statusCode()}")
+                return@whenComplete
+            }
+            onOpen(
+                HttpResult(
+                    status = response.statusCode(),
+                    statusText = reasonPhrase(response.statusCode()),
+                    headers = headers,
+                ),
+            )
+            Thread({
+                try {
+                    BufferedReader(InputStreamReader(response.body(), StandardCharsets.UTF_8)).use { reader ->
+                        var event = "message"
+                        var data = StringBuilder()
+                        var id: String? = null
+                        while (!closed.get()) {
+                            val line = reader.readLine() ?: break
+                            if (line.isEmpty()) {
+                                if (data.isNotEmpty() || event != "message") {
+                                    onEvent(SseEvent(event, data.toString(), id))
+                                }
+                                event = "message"
+                                data = StringBuilder()
+                                continue
+                            }
+                            if (line.startsWith(":")) continue
+                            val separator = line.indexOf(':')
+                            val field = if (separator < 0) line else line.substring(0, separator)
+                            var value = if (separator < 0) "" else line.substring(separator + 1)
+                            if (value.startsWith(" ")) value = value.substring(1)
+                            when (field) {
+                                "event" -> event = value
+                                "data" -> {
+                                    if (data.isNotEmpty()) data.append('\n')
+                                    data.append(value)
+                                }
+                                "id" -> id = value
+                            }
+                        }
+                    }
+                    if (!closed.get()) onClosed("Connection closed")
+                } catch (readError: Exception) {
+                    if (!closed.get()) onError(readError.message ?: "Event stream failed")
+                }
+            }, "Astra SSE reader").apply { isDaemon = true }.start()
+        }
+        return SseCall {
+            closed.set(true)
+            future.cancel(true)
+            runCatching { stream.get()?.close() }
+        }
     }
 
     private fun multipartBody(fields: List<KeyValue>, boundary: String, vars: Map<String, String>): ByteArray {
@@ -231,5 +429,5 @@ internal fun buildRequestUrl(request: AstraRequest, vars: Map<String, String>): 
     return base + separator + query.joinToString("&") { (key, value) -> "$key=$value" } + fragment
 }
 
-private fun encodeQueryComponent(value: String): String =
+internal fun encodeQueryComponent(value: String): String =
     URLEncoder.encode(value, StandardCharsets.UTF_8)

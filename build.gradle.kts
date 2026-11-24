@@ -7,7 +7,7 @@ import org.gradle.api.tasks.testing.Test
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
 group = "com.astra"
-version = "0.3.11"
+version = "0.3.12"
 
 repositories {
     mavenCentral()

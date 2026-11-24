@@ -3,7 +3,6 @@ package com.astra.intellij.core
 import com.astra.intellij.model.AstraEnvironment
 import com.astra.intellij.model.HttpResult
 import com.google.gson.JsonParser
-import java.nio.charset.StandardCharsets
 
 /**
  * Executes declarative post-response instructions, one per line, and stores the extracted
@@ -55,7 +54,7 @@ object PostResponseService {
 
     private fun extract(tokens: List<String>, result: HttpResult, vars: Map<String, String>): String? {
         val mode = tokens.getOrNull(2)?.lowercase() ?: return null
-        val body = String(result.body, StandardCharsets.UTF_8)
+        val body = ResponseCharset.decode(result)
         return when (mode) {
             "json" -> {
                 val path = tokens.getOrNull(3) ?: return null

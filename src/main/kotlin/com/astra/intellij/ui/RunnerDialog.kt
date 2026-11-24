@@ -2,6 +2,8 @@ package com.astra.intellij.ui
 
 import com.astra.intellij.core.CollectionRunner
 import com.astra.intellij.core.DataFileService
+import com.astra.intellij.core.JUnitCase
+import com.astra.intellij.core.JUnitReport
 import com.astra.intellij.core.RunItemResult
 import com.astra.intellij.core.RunnerConfig
 import com.astra.intellij.model.AstraRequest
@@ -135,6 +137,9 @@ class RunnerDialog(
     private val exportAction = object : DialogWrapperAction("Export Report") {
         override fun doAction(e: java.awt.event.ActionEvent?) = exportReport()
     }
+    private val exportJUnitAction = object : DialogWrapperAction("Export JUnit") {
+        override fun doAction(e: java.awt.event.ActionEvent?) = exportJUnit()
+    }
 
     /** Dialogs are outside the project frame, so they need their own theme refresh. */
     private val themeDisposable = com.intellij.openapi.util.Disposer.newDisposable("Astra runner theme")
@@ -145,6 +150,7 @@ class RunnerDialog(
         init()
         stopAction.isEnabled = false
         exportAction.isEnabled = false
+        exportJUnitAction.isEnabled = false
         iterationFilter.addActionListener { refreshVisibleRows() }
         styleTable(resultTable, failureTable)
         installRunShortcut()
@@ -303,7 +309,8 @@ class RunnerDialog(
         preferredSize = JBUI.size(980, 680)
     }
 
-    override fun createActions(): Array<Action> = arrayOf(exportAction, stopAction, runAction, cancelAction)
+    override fun createActions(): Array<Action> =
+        arrayOf(exportJUnitAction, exportAction, stopAction, runAction, cancelAction)
 
     override fun doCancelAction() {
         runner.cancel()
@@ -469,6 +476,7 @@ class RunnerDialog(
         runAction.isEnabled = false
         stopAction.isEnabled = true
         exportAction.isEnabled = false
+        exportJUnitAction.isEnabled = false
         setConfigEnabled(false)
         rows.clear()
         resultModel.rowCount = 0
@@ -502,6 +510,7 @@ class RunnerDialog(
                 runAction.isEnabled = true
                 stopAction.isEnabled = false
                 exportAction.isEnabled = rows.isNotEmpty()
+                exportJUnitAction.isEnabled = rows.isNotEmpty()
                 setConfigEnabled(true)
                 refreshResultsCard()
             }, ModalityState.any())
@@ -644,6 +653,38 @@ class RunnerDialog(
             Messages.showInfoMessage(ownerProject, "Report exported to ${file.absolutePath}", "Export Report")
         } catch (e: Exception) {
             Messages.showErrorDialog(ownerProject, e.message ?: "Unable to export report", "Export Failed")
+        }
+    }
+
+    private fun exportJUnit() {
+        if (rows.isEmpty()) {
+            Messages.showInfoMessage(ownerProject, "No run results to export", "Export JUnit")
+            return
+        }
+        val fileName = "astra-runner-${runName.replace(Regex("[^A-Za-z0-9_-]"), "-")}-${Instant.now().epochSecond}.xml"
+        val file = AstraFileChooser.save(contentPane, "Export JUnit Report", fileName, "xml") ?: return
+        val multipleIterations = rows.map { it.iteration }.distinct().size > 1
+        val cases = rows.map { row ->
+            JUnitCase(
+                name = if (multipleIterations) {
+                    "#${row.iteration + 1} ${row.result.request.name}"
+                } else {
+                    row.result.request.name
+                },
+                className = runName,
+                timeMs = row.result.timeMs,
+                error = row.result.error,
+                failures = row.result.tests.filterNot { it.passed }.map { test ->
+                    if (test.detail.isBlank()) test.assertion else "${test.assertion} — ${test.detail}"
+                },
+                assertions = row.result.tests,
+            )
+        }
+        try {
+            file.writeText(JUnitReport.build(runName, cases))
+            Messages.showInfoMessage(ownerProject, "JUnit report exported to ${file.absolutePath}", "Export JUnit")
+        } catch (e: Exception) {
+            Messages.showErrorDialog(ownerProject, e.message ?: "Unable to export JUnit report", "Export Failed")
         }
     }
 

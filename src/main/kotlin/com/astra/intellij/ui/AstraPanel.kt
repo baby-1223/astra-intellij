@@ -1,15 +1,20 @@
 package com.astra.intellij.ui
 
 import com.astra.intellij.core.ArchiveService
+import com.astra.intellij.core.CodegenLanguage
 import com.astra.intellij.core.HttpClients
 import com.astra.intellij.core.InsomniaService
 import com.astra.intellij.core.OpenApiService
 import com.astra.intellij.core.PostmanService
 import com.astra.intellij.model.AstraRequest
+import com.astra.intellij.model.AuthConfig
+import com.astra.intellij.model.PROTOCOL_WEBSOCKET
 import com.astra.intellij.model.RequestCollection
 import com.astra.intellij.model.RequestFolder
 import com.astra.intellij.model.allFolders
 import com.astra.intellij.model.allRequests
+import com.astra.intellij.model.effectiveAuth
+import com.astra.intellij.model.inheritedScripts
 import com.astra.intellij.model.normalize
 import com.astra.intellij.workspace.WorkspaceService
 import com.google.gson.Gson
@@ -19,6 +24,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.WrapLayout
 import java.awt.BorderLayout
 import java.awt.Component
@@ -49,13 +55,18 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private val workspace = WorkspaceService.get(project)
     private val environmentBox = JComboBox<String>()
     private val tree = JTree()
+    private val draftTimer = javax.swing.Timer(3_000) { persistDrafts() }
     private val tabStrip = RequestTabStrip(
         onSelectionChanged = { /* selection is tracked by the strip itself */ },
         onCloseRequested = { closeSession(it) },
         onNewRequest = { newRequest() },
     )
-    private val sessions = mutableListOf<RequestSessionPanel>()
+    private val sessions = mutableListOf<TabSession>()
     private val postman = PostmanService()
+    private val monitors = com.astra.intellij.core.MonitorService(workspace) {
+        notifySharedWorkspace()
+        refreshTree()
+    }
     private val insomnia = InsomniaService()
     private val openApi = OpenApiService()
     private val archive = ArchiveService()
@@ -64,6 +75,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     private var syncingFromBus = false
     private var starredOnly = false
     private var hoveredRow = -1
+    private val collectionFilter = JBTextField()
 
     init {
         add(buildToolbar(), BorderLayout.NORTH)
@@ -76,7 +88,9 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         refreshEnvironments()
         refreshTree()
         registerTabShortcuts()
-        newRequest()
+        restoreDraftsOrNew()
+        draftTimer.start()
+        monitors.start()
         installThemeListener()
     }
 
@@ -96,7 +110,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         try {
             refreshEnvironments()
             refreshTree()
-            sessions.forEach { it.refreshHistory() }
+            sessions.forEach { (it as? RequestSessionPanel)?.refreshHistory() }
         } finally {
             syncingFromBus = false
         }
@@ -119,7 +133,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             })
     }
 
-    private fun currentSession(): RequestSessionPanel? = tabStrip.selectedSession
+    private fun currentSession(): TabSession? = tabStrip.selectedSession
 
     private fun notify(message: String) = currentSession()?.showMessage(message) ?: Unit
 
@@ -130,27 +144,68 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
 
     private fun openRequest(request: AstraRequest, bound: Boolean) {
         request.normalize()
-        sessions.firstOrNull { it.request === request }?.let { existing ->
+        sessions.firstOrNull { it.modelRequest() === request }?.let { existing ->
             tabStrip.selectSession(existing)
             return
         }
         currentSession()?.commitEditor()
-        val session = RequestSessionPanel(
-            project = project,
-            workspace = workspace,
-            onStructureChanged = ::structureChanged,
-            onSaveToCollection = ::saveToCollection,
-        )
+        val session: TabSession = if (request.isWebSocket) {
+            WsSessionPanel(project, workspace, request, ::saveToCollection).also { it.showRequest(request, bound) }
+        } else {
+            createSession().also { it.showRequest(request, bound) }
+        }
         try {
-            session.showRequest(request, bound)
-            session.onTitleChanged = { tabStrip.updateTitle(session) }
-            sessions.add(session)
-            tabStrip.addSession(session)
+            attachSession(session)
         } catch (t: Throwable) {
             sessions.remove(session)
             com.intellij.openapi.diagnostic.Logger.getInstance(AstraPanel::class.java).warn("Open request failed", t)
             Messages.showErrorDialog(project, t.message ?: "Unknown error", "Cannot Open Request")
         }
+    }
+
+    private fun createSession(): RequestSessionPanel = RequestSessionPanel(
+        project = project,
+        workspace = workspace,
+        onStructureChanged = ::structureChanged,
+        onSaveToCollection = ::saveToCollection,
+        onDataChanged = ::notifySharedWorkspace,
+        onOpenDraft = { openRequest(it, bound = false) },
+    )
+
+    private fun attachSession(session: TabSession) {
+        when (session) {
+            is RequestSessionPanel -> session.onTitleChanged = { tabStrip.updateTitle(session) }
+            is WsSessionPanel -> session.onTitleChanged = { tabStrip.updateTitle(session) }
+        }
+        sessions.add(session)
+        tabStrip.addSession(session)
+    }
+
+    private fun restoreDraftsOrNew() {
+        val drafts = RequestDrafts.loadOnce()
+        if (drafts.isEmpty()) {
+            newRequest()
+            return
+        }
+        drafts.forEach { draft ->
+            draft.normalize()
+            val saved = findRequestById(draft.id)
+            val session = createSession()
+            session.showDraft(draft, saved)
+            attachSession(session)
+        }
+    }
+
+    private fun findRequestById(id: String): AstraRequest? = workspace.data.collections
+        .asSequence()
+        .flatMap { it.allRequests().asSequence() }
+        .firstOrNull { it.id == id }
+
+    /** Writes unsaved tabs to disk; called periodically and on dispose. */
+    private fun persistDrafts() {
+        if (sessions.isEmpty()) return
+        val snapshots = sessions.mapNotNull { (it as? RequestSessionPanel)?.draftSnapshot() }
+        RequestDrafts.save(snapshots)
     }
 
     private fun refreshTabTitles() {
@@ -159,23 +214,32 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
 
     private fun newRequest() = openRequest(AstraRequest(name = "New Request"), bound = false)
 
-    private fun closeSession(session: RequestSessionPanel) {
+    private fun closeSession(session: TabSession) {
         session.disposeSession()
         sessions.remove(session)
-        if (selectedNodeValue() === session.request) tree.clearSelection()
+        if (session.modelRequest() != null && selectedNodeValue() === session.modelRequest()) tree.clearSelection()
         tabStrip.removeSession(session)
     }
 
-    private fun saveToCollection(session: RequestSessionPanel) {
+    private fun saveToCollection(session: TabSession) {
+        val model = session.modelRequest() ?: return
         val target = selectedTarget() ?: run {
             if (workspace.data.collections.isEmpty()) {
                 workspace.data.collections.add(RequestCollection(name = "Default Collection"))
             }
             workspace.data.collections.first()
         }
+        if (workspace.data.collections.any { collection ->
+                collection.allRequests().any { it === model }
+            }
+        ) {
+            session.markBound()
+            structureChanged()
+            return
+        }
         when (target) {
-            is RequestCollection -> target.requests.add(session.request)
-            is RequestFolder -> target.requests.add(session.request)
+            is RequestCollection -> target.requests.add(model)
+            is RequestFolder -> target.requests.add(model)
         }
         session.markBound()
         structureChanged()
@@ -211,7 +275,10 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         environmentBox.addActionListener {
             if (!refreshingEnvironments) {
                 val env = workspace.data.environments.getOrNull(environmentBox.selectedIndex)
-                if (env != null) workspace.data.activeEnvironmentId = env.id
+                if (env != null) {
+                    workspace.data.activeEnvironmentId = env.id
+                    notifySharedWorkspace()
+                }
             }
         }
         add(JButton("Manage \u25BE").apply {
@@ -221,10 +288,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                     "Environments..." to ::editEnvironments,
                     "Globals..." to ::editGlobals,
                     "Settings..." to ::editSettings,
-                    "Clear Cookies" to {
-                        HttpClients.clearCookies()
-                        notify("Cookies cleared")
-                    },
+                    "Cookies..." to { CookiesDialog(project).show() },
                     "Reset Workspace..." to ::resetWorkspace,
                 ).forEach { (label, action) ->
                     menu.add(javax.swing.JMenuItem(label).apply { addActionListener { action() } })
@@ -248,24 +312,38 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                     "Insomnia (.json)" to ::importInsomnia,
                     "OpenAPI / Swagger JSON" to ::importOpenApi,
                     "Astra Workspace (.json)" to ::importWorkspace,
-                    "cURL Command" to { currentSession()?.importCurl() },
+                    "cURL Command" to { (currentSession() as? RequestSessionPanel)?.importCurl() },
                 ))
             }
         })
         add(JButton("Export \u25BE").apply {
-            addActionListener {
-                showMenu(this, listOf(
-                    "Postman Collection" to ::exportPostmanCollection,
-                    "Postman Environment" to ::exportPostmanEnvironment,
-                    "Postman Data Dump (.zip)" to ::exportPostmanDataDump,
-                    "Insomnia Request (.json)" to ::exportInsomniaRequest,
-                    "Insomnia All (.json)" to ::exportInsomniaAll,
-                    "OpenAPI 3.0 JSON" to ::exportOpenApi,
-                    "Astra Workspace (.json)" to ::exportWorkspace,
-                    "cURL to Clipboard" to { currentSession()?.exportCurl() },
-                ))
-            }
+            addActionListener { showExportMenu(this) }
         })
+    }
+
+    /** Export menu with an extra submenu for multi-language code snippets. */
+    private fun showExportMenu(button: JButton) {
+        val menu = JPopupMenu()
+        listOf<Pair<String, () -> Unit>>(
+            "Postman Collection" to ::exportPostmanCollection,
+            "Postman Environment" to ::exportPostmanEnvironment,
+            "Postman Data Dump (.zip)" to ::exportPostmanDataDump,
+            "Insomnia Request (.json)" to ::exportInsomniaRequest,
+            "Insomnia All (.json)" to ::exportInsomniaAll,
+            "OpenAPI 3.0 JSON" to ::exportOpenApi,
+            "Astra Workspace (.json)" to ::exportWorkspace,
+        ).forEach { (label, action) ->
+            menu.add(javax.swing.JMenuItem(label).apply { addActionListener { action() } })
+        }
+        menu.addSeparator()
+        val codeMenu = javax.swing.JMenu("Copy as Code")
+        CodegenLanguage.values().forEach { language ->
+            codeMenu.add(javax.swing.JMenuItem(language.label).apply {
+                addActionListener { (currentSession() as? RequestSessionPanel)?.exportCode(language) }
+            })
+        }
+        menu.add(codeMenu)
+        menu.show(button, 0, button.height)
     }
 
     private fun showMenu(button: JButton, items: List<Pair<String, () -> Unit>>) {
@@ -340,6 +418,26 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
                 }
             }
         })
+        collectionFilter.emptyText.text = "Filter by name or URL"
+        collectionFilter.toolTipText = "Type to filter requests by name, URL or method; press Esc to clear"
+        collectionFilter.document.addDocumentListener(object : javax.swing.event.DocumentListener {
+            override fun insertUpdate(e: javax.swing.event.DocumentEvent) = refreshTree(broadcast = false)
+            override fun removeUpdate(e: javax.swing.event.DocumentEvent) = refreshTree(broadcast = false)
+            override fun changedUpdate(e: javax.swing.event.DocumentEvent) = refreshTree(broadcast = false)
+        })
+        collectionFilter.addKeyListener(object : java.awt.event.KeyAdapter() {
+            override fun keyPressed(e: KeyEvent) {
+                if (e.keyCode == KeyEvent.VK_ESCAPE && collectionFilter.text.isNotEmpty()) {
+                    collectionFilter.text = ""
+                    e.consume()
+                }
+            }
+        })
+        val filterRow = JPanel(BorderLayout()).apply {
+            border = javax.swing.BorderFactory.createEmptyBorder(4, 4, 4, 4)
+            add(collectionFilter, BorderLayout.CENTER)
+        }
+        panel.add(filterRow, BorderLayout.NORTH)
         panel.add(JBScrollPane(tree), BorderLayout.CENTER)
         tree.dragEnabled = true
         tree.dropMode = javax.swing.DropMode.ON
@@ -586,10 +684,18 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         when (value) {
             is RequestCollection -> {
                 item("Add Request", AstraIcons.request("GET"), ADD_REQUEST_STROKE) { addRequest(value) }
+                item("Add WebSocket Connection") { addWebSocket(value) }
                 item("Add Folder", AstraIcons.folder, ADD_FOLDER_STROKE) { addFolder(value) }
                 menu.addSeparator()
                 item("Run Collection", AstraIcons.run, RUN_STROKE) { runRequests(value.name, value.allRequests()) }
+                item("Monitors\u2026") { editMonitors(value) }
                 item("Edit Variables...") { editVariables(value) }
+                item("Edit Authorization...") {
+                    editParentAuth(value.name, value.auth)
+                }
+                item("Edit Scripts...") {
+                    editParentScripts(value.name, value.preRequest, value.postResponse)
+                }
                 item(if (value.starred) "Unstar Collection" else "Star Collection") {
                     value.starred = !value.starred
                     structureChanged()
@@ -602,10 +708,17 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             }
             is RequestFolder -> {
                 item("Add Request", AstraIcons.request("GET"), ADD_REQUEST_STROKE) { addRequest(value) }
+                item("Add WebSocket Connection") { addWebSocket(value) }
                 item("Add Folder", AstraIcons.folder, ADD_FOLDER_STROKE) { addFolder(value) }
                 menu.addSeparator()
                 item("Run Folder", AstraIcons.run, RUN_STROKE) { runRequests(value.name, value.allRequests()) }
                 item("Edit Variables...") { editVariables(value) }
+                item("Edit Authorization...") {
+                    editParentAuth(value.name, value.auth)
+                }
+                item("Edit Scripts...") {
+                    editParentScripts(value.name, value.preRequest, value.postResponse)
+                }
                 menu.addSeparator()
                 item("Rename", AstraIcons.rename, RENAME_STROKE) { renameValue(value) }
                 item("Duplicate", AstraIcons.duplicate, DUPLICATE_STROKE) { duplicateValue(value) }
@@ -620,10 +733,20 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             }
             else -> {
                 item("Add Request", AstraIcons.request("GET"), ADD_REQUEST_STROKE) { newRequest() }
-                item("Add Collection", AstraIcons.collection, ADD_COLLECTION_STROKE) { addCollection() }
-            }
+                item("Add WebSocket Connection") { addWebSocket(null) }
+                item("Add Collection", AstraIcons.collection, ADD_COLLECTION_STROKE) { addCollection() }            }
         }
         menu.show(tree, x, y)
+    }
+
+    private fun editMonitors(collection: RequestCollection) {
+        val own = workspace.data.monitors
+            .filter { it.collectionId == collection.id }
+            .toMutableList()
+        MonitorDialog(this, collection, own) { monitors.runNow(it) }.show()
+        workspace.data.monitors.removeAll { it.collectionId == collection.id }
+        workspace.data.monitors.addAll(own.filter { it.collectionId == collection.id })
+        notifySharedWorkspace()
     }
 
     private fun runRequests(name: String, requests: List<AstraRequest>) {
@@ -631,7 +754,19 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             Messages.showInfoMessage(project, "No requests to run", "Collection Runner")
             return
         }
-        RunnerDialog(project, workspace, name, requests).show()
+        val runs = requests.filterNot { it.isWebSocket }
+        if (runs.isEmpty()) return
+        val prepared = runs.map { original ->
+            val collection = workspace.collectionOf(original) ?: return@map original
+            val copy = deepCopy(original, AstraRequest::class.java)
+            collection.effectiveAuth(original)?.let { copy.auth = it.copy() }
+            val pre = collection.inheritedScripts(original, preRequest = true)
+            if (pre.isNotEmpty()) copy.preRequest = (pre + copy.preRequest).toMutableList()
+            val post = collection.inheritedScripts(original, preRequest = false)
+            if (post.isNotEmpty()) copy.postResponse = (post + copy.postResponse).toMutableList()
+            copy
+        }
+        RunnerDialog(project, workspace, name, prepared).show()
     }
 
     private fun renameValue(value: Any) {
@@ -641,7 +776,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             is AstraRequest -> value.name
             else -> return
         }
-        sessions.firstOrNull { it.request === value }?.commitEditor()
+        sessions.firstOrNull { it.modelRequest() === value }?.commitEditor()
         val name = Messages.showInputDialog(project, "Name", "Rename", null, currentName, null)?.trim()
         if (name.isNullOrEmpty()) return
         when (value) {
@@ -649,8 +784,25 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             is RequestFolder -> value.name = name
             is AstraRequest -> value.name = name
         }
-        sessions.firstOrNull { it.request === value }?.reloadEditor()
+        sessions.firstOrNull { it.modelRequest() === value }?.reloadEditor()
         structureChanged()
+    }
+
+    private fun editParentAuth(name: String, auth: AuthConfig) {
+        if (ParentAuthDialog(this, "Authorization — $name", auth).showAndGet()) {
+            notifySharedWorkspace()
+            structureChanged()
+        }
+    }
+
+    private fun editParentScripts(
+        name: String,
+        preRequest: MutableList<String>,
+        postResponse: MutableList<String>,
+    ) {
+        if (ParentScriptsDialog(this, "Scripts — $name", preRequest, postResponse).showAndGet()) {
+            notifySharedWorkspace()
+        }
     }
 
     private fun editVariables(collection: RequestCollection) {
@@ -730,10 +882,11 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
 
     private fun <T> deepCopy(value: T, type: Class<T>): T = gson.fromJson(gson.toJson(value), type)
 
-    private fun refreshTree(select: AstraRequest? = null) {
+    private fun refreshTree(select: AstraRequest? = null, broadcast: Boolean = true) {
         workspace.data.normalize()
         val root = DefaultMutableTreeNode(Node("Workspace", workspace.data))
         var selectNode: DefaultMutableTreeNode? = null
+        val query = collectionFilter.text.trim()
 
         fun requestNode(request: AstraRequest): DefaultMutableTreeNode {
             val node = DefaultMutableTreeNode(Node("${request.method}  ${request.name}", request))
@@ -741,28 +894,49 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
             return node
         }
 
-        fun appendFolder(parentNode: DefaultMutableTreeNode, folder: RequestFolder) {
+        fun matches(request: AstraRequest): Boolean = query.isEmpty() ||
+            request.name.contains(query, ignoreCase = true) ||
+            request.url.contains(query, ignoreCase = true) ||
+            request.method.contains(query, ignoreCase = true)
+
+        fun folderHasMatch(folder: RequestFolder): Boolean =
+            folder.name.contains(query, ignoreCase = true) ||
+                folder.requests.any { matches(it) } ||
+                folder.folders.any { folderHasMatch(it) }
+
+        fun appendFolder(parentNode: DefaultMutableTreeNode, folder: RequestFolder, includeAll: Boolean) {
+            val showAll = includeAll || folder.name.contains(query, ignoreCase = true)
+            val requests = if (showAll) folder.requests else folder.requests.filter { matches(it) }
+            val folders = if (showAll) folder.folders else folder.folders.filter { folderHasMatch(it) }
+            if (query.isNotEmpty() && !showAll && requests.isEmpty() && folders.isEmpty()) return
             val folderNode = DefaultMutableTreeNode(Node(folder.name, folder))
             parentNode.add(folderNode)
-            folder.requests.forEach { folderNode.add(requestNode(it)) }
-            folder.folders.forEach { appendFolder(folderNode, it) }
+            requests.forEach { folderNode.add(requestNode(it)) }
+            folders.forEach { appendFolder(folderNode, it, showAll) }
         }
 
         val collections = workspace.data.collections
             .let { all -> if (starredOnly) all.filter { it.starred } else all }
             .sortedByDescending { it.starred }
         collections.forEach { collection ->
+            val showAll = query.isEmpty() || collection.name.contains(query, ignoreCase = true)
+            if (query.isNotEmpty() && !showAll) {
+                val hasMatch = collection.requests.any { matches(it) } || collection.folders.any { folderHasMatch(it) }
+                if (!hasMatch) return@forEach
+            }
             val collectionNode = DefaultMutableTreeNode(Node(collection.name, collection))
             root.add(collectionNode)
-            collection.folders.forEach { appendFolder(collectionNode, it) }
-            collection.requests.forEach { collectionNode.add(requestNode(it)) }
+            collection.folders.forEach { appendFolder(collectionNode, it, showAll) }
+            val requests = if (showAll) collection.requests else collection.requests.filter { matches(it) }
+            requests.forEach { collectionNode.add(requestNode(it)) }
         }
         tree.model = DefaultTreeModel(root)
         for (row in 0 until tree.rowCount) tree.expandRow(row)
-        if (selectNode != null) {
-            tree.selectionPath = javax.swing.tree.TreePath(selectNode!!.path)
+        val target = selectNode
+        if (target != null) {
+            tree.selectionPath = javax.swing.tree.TreePath(target.path)
         }
-        notifySharedWorkspace()
+        if (broadcast) notifySharedWorkspace()
     }
 
     private fun addCollection() {
@@ -794,12 +968,34 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         refreshTree(request)
     }
 
+    private fun addWebSocket(target: Any?) {
+        val connection = AstraRequest(
+            name = "New WebSocket",
+            protocol = PROTOCOL_WEBSOCKET,
+            method = "WS",
+        )
+        when (target) {
+            is RequestCollection -> target.requests.add(connection)
+            is RequestFolder -> target.requests.add(connection)
+            null -> {
+                openRequest(connection, bound = false)
+                return
+            }
+            else -> return
+        }
+        openRequest(connection, bound = true)
+        refreshTree(connection)
+    }
+
     private fun deleteValue(value: Any) {
         if (!com.astra.intellij.model.TreeOperations.remove(workspace.data, value)) return
+        if (value is RequestCollection) {
+            workspace.data.monitors.removeAll { it.collectionId == value.id }
+        }
         // Repaint first so a failing tab close can never leave a stale node on screen.
         refreshTree()
         sessions.filter { session ->
-            val bound = session.savedRequest
+            val bound = session.savedModel()
             bound != null && workspace.data.collections.none { collection ->
                 collection.allRequests().any { it === bound }
             }
@@ -821,6 +1017,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
 
     private fun editGlobals() {
         GlobalsDialog(project, workspace.data.globals).show()
+        notifySharedWorkspace()
     }
 
     private fun editSettings() {
@@ -839,6 +1036,10 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
         )
         if (answer != Messages.YES) return
         sessions.toList().forEach(::closeSession)
+        com.astra.intellij.core.forgetSecrets(workspace.data) { ref ->
+            com.astra.intellij.core.SecretStore.forget(ref)
+        }
+        RequestDrafts.clear()
         HttpClients.clearCookies()
         workspace.reset()
         refreshTree()
@@ -1045,7 +1246,7 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
 
     private fun exportInsomniaRequest() {
         currentSession()?.commitEditor()
-        val request = (selectedNodeValue() as? AstraRequest) ?: currentSession()?.request
+        val request = (selectedNodeValue() as? AstraRequest) ?: currentSession()?.modelRequest()
         if (request == null) {
             Messages.showInfoMessage(project, "Select a request to export", "Export")
             return
@@ -1236,6 +1437,9 @@ class AstraPanel(private val project: Project) : JPanel(BorderLayout()), Disposa
     }
 
     override fun dispose() {
+        persistDrafts()
+        draftTimer.stop()
+        monitors.dispose()
         sessions.forEach { it.disposeSession() }
         sessions.clear()
     }

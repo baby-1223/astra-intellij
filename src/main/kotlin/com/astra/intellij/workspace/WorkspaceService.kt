@@ -1,5 +1,8 @@
 package com.astra.intellij.workspace
 
+import com.astra.intellij.core.SecretStore
+import com.astra.intellij.core.hydrateSecrets
+import com.astra.intellij.core.redactSecrets
 import com.astra.intellij.model.AstraEnvironment
 import com.astra.intellij.model.AstraRequest
 import com.astra.intellij.model.RequestFolder
@@ -47,7 +50,12 @@ class WorkspaceService : PersistentStateComponent<WorkspaceService.State> {
         ensureEnvironment()
     }
 
-    override fun getState(): State = State(gson.toJson(data), migrated.toMutableList())
+    override fun getState(): State {
+        // Persist a redacted copy: credentials stay in the system credential store, not astra.xml.
+        val copy = gson.fromJson(gson.toJson(data), WorkspaceData::class.java) ?: data
+        redactSecrets(copy) { ref, value -> SecretStore.write(ref, value) }
+        return State(gson.toJson(copy), migrated.toMutableList())
+    }
 
     override fun loadState(state: State) {
         data = if (state.payload.isBlank()) {
@@ -57,9 +65,17 @@ class WorkspaceService : PersistentStateComponent<WorkspaceService.State> {
                 .getOrNull() ?: WorkspaceData()
         }
         data.normalize()
+        migrateSchema()
+        hydrateSecrets(data) { ref -> SecretStore.read(ref) }
         migrated.clear()
         migrated.addAll(state.migratedProjects.orEmpty())
         ensureEnvironment()
+    }
+
+    private fun migrateSchema() {
+        if (data.schemaVersion >= WorkspaceData.CURRENT_SCHEMA_VERSION) return
+        // Payloads written before the field existed are already compatible with version 1.
+        data.schemaVersion = WorkspaceData.CURRENT_SCHEMA_VERSION
     }
 
     /** Restores the first-run state: no collections, history or settings, one empty environment. */
@@ -90,7 +106,7 @@ class WorkspaceService : PersistentStateComponent<WorkspaceService.State> {
         activeEnvironment().variables,
     )
 
-    private fun collectionOf(request: AstraRequest?) =
+    fun collectionOf(request: AstraRequest?) =
         request?.let { target -> data.collections.firstOrNull { it.containsRequest(target) } }
 
     /** Tells other windows that the shared workspace changed. */

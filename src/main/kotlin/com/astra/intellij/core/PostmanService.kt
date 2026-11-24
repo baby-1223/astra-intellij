@@ -45,15 +45,10 @@ class PostmanService {
             variables = variables.values,
             disabledVariables = variables.disabled,
         )
-        root.array("item")?.let {
-            parseItems(
-                it,
-                collection,
-                null,
-                parseAuthConfig(root.obj("auth")),
-                eventScript(root.array("event"), "prerequest"),
-            )
-        }
+        parseAuthConfig(root.obj("auth"))?.let { collection.auth = it }
+        collection.preRequest = eventScript(root.array("event"), "prerequest").toMutableList()
+        collection.postResponse = eventScript(root.array("event"), "test").toMutableList()
+        root.array("item")?.let { parseItems(it, collection, null) }
         return collection
     }
 
@@ -521,10 +516,13 @@ class PostmanService {
             }
         }
         if (collections.size == 1) {
+            val single = collections.first()
             root.add(
                 "variable",
-                variablesJson(collections.first().variables, collections.first().disabledVariables),
+                variablesJson(single.variables, single.disabledVariables),
             )
+            exportScopeAuth(single.auth)?.let { root.add("auth", it) }
+            scopeEvents(single.preRequest, single.postResponse)?.let { root.add("event", it) }
         }
         root.add("item", items)
         return gson.toJson(root)
@@ -561,18 +559,44 @@ class PostmanService {
     private fun folderJson(folder: RequestFolder): JsonObject = JsonObject().apply {
         addProperty("name", folder.name)
         add("variable", variablesJson(folder.variables, folder.disabledVariables))
+        exportScopeAuth(folder.auth)?.let { add("auth", it) }
+        scopeEvents(folder.preRequest, folder.postResponse)?.let { add("event", it) }
         add("item", JsonArray().also { array ->
             folder.requests.forEach { array.add(requestJson(it)) }
             folder.folders.forEach { array.add(folderJson(it)) }
         })
     }
 
+    /** Scope auth export: "noauth" stops inheritance, "inherit" is omitted, real types are kept. */
+    private fun exportScopeAuth(auth: AuthConfig): JsonObject? = when (auth.type.lowercase(Locale.ROOT)) {
+        "none" -> JsonObject().apply { addProperty("type", "noauth") }
+        "inherit", "" -> null
+        else -> authJson(auth)
+    }
+
+    /** Postman "event" array for the pre-request and test scripts of a collection or folder. */
+    private fun scopeEvents(preRequest: List<String>, postResponse: List<String>): JsonArray? {
+        if (preRequest.isEmpty() && postResponse.isEmpty()) return null
+        return JsonArray().apply {
+            fun append(listen: String, lines: List<String>) {
+                if (lines.isEmpty()) return
+                add(JsonObject().apply {
+                    addProperty("listen", listen)
+                    add("script", JsonObject().apply {
+                        addProperty("type", "text/javascript")
+                        add("exec", JsonArray().apply { lines.forEach { add(it) } })
+                    })
+                })
+            }
+            append("prerequest", preRequest)
+            append("test", postResponse)
+        }
+    }
+
     private fun parseItems(
         items: JsonArray,
         collection: RequestCollection,
         parent: RequestFolder?,
-        inheritedAuth: AuthConfig? = null,
-        inheritedScript: List<String> = emptyList(),
     ) {
         items.forEach { element ->
             val item = element.asJsonObject
@@ -581,8 +605,8 @@ class PostmanService {
             val children = item.array("item")
             when {
                 request != null && !request.isJsonNull -> {
-                    val parsed = parseRequest(name, request, inheritedAuth)
-                    val script = inheritedScript + eventScript(item.array("event"), "prerequest")
+                    val parsed = parseRequest(name, request)
+                    val script = eventScript(item.array("event"), "prerequest")
                     if (script.isNotEmpty()) parsed.preRequest = script.toMutableList()
                     if (parent != null) parent.requests.add(parsed) else collection.requests.add(parsed)
                 }
@@ -593,25 +617,30 @@ class PostmanService {
                         variables = folderVariables.values,
                         disabledVariables = folderVariables.disabled,
                     )
+                    folder.auth = scopeAuth(item.obj("auth"))
+                    folder.preRequest = eventScript(item.array("event"), "prerequest").toMutableList()
+                    folder.postResponse = eventScript(item.array("event"), "test").toMutableList()
                     if (parent != null) parent.folders.add(folder) else collection.folders.add(folder)
-                    children?.let {
-                        parseItems(
-                            it,
-                            collection,
-                            folder,
-                            parseAuthConfig(item.obj("auth")) ?: inheritedAuth,
-                            inheritedScript + eventScript(item.array("event"), "prerequest"),
-                        )
-                    }
+                    children?.let { parseItems(it, collection, folder) }
                 }
             }
         }
     }
 
+    /**
+     * Folder auth keeps Postman's inheritance semantics: a missing auth object inherits from the
+     * parent, an explicit "no auth" stops inheritance, and supported types are applied directly.
+     */
+    private fun scopeAuth(auth: JsonObject?): AuthConfig {
+        if (auth == null) return AuthConfig(type = "inherit")
+        val type = auth.string("type")?.lowercase(Locale.ROOT).orEmpty()
+        if (type == "noauth" || type == "none") return AuthConfig(type = "none")
+        return parseAuthConfig(auth) ?: AuthConfig(type = "inherit")
+    }
+
     private fun parseRequest(
         name: String,
         element: JsonElement,
-        inheritedAuth: AuthConfig? = null,
     ): AstraRequest {
         val request = AstraRequest(name = name)
         if (element.isJsonPrimitive) {
@@ -624,8 +653,9 @@ class PostmanService {
         parseHeaders(obj.array("header"), request)
         parseBody(obj.obj("body"), request)
         parseAuth(obj.obj("auth"), request)
-        if (request.auth.type == "none" && inheritedAuth != null) {
-            request.auth = inheritedAuth.copy()
+        if (request.auth.type == "none" && obj.obj("auth") == null) {
+            // No auth object on the request itself: inherit folder/collection auth like Postman.
+            request.auth = AuthConfig(type = "inherit")
         }
         return request
     }
@@ -755,17 +785,9 @@ class PostmanService {
             }
             "graphql" -> {
                 val graphql = body.obj("graphql") ?: return
-                val query = graphql.string("query").orEmpty()
-                val variables = graphql.string("variables")
-                request.body = if (variables.isNullOrBlank()) {
-                    JsonObject().apply { addProperty("query", query) }.toString()
-                } else {
-                    JsonObject().apply {
-                        addProperty("query", query)
-                        runCatching { add("variables", JsonParser.parseString(variables)) }
-                    }.toString()
-                }
-                request.bodyMode = "json"
+                request.graphqlQuery = graphql.string("query").orEmpty()
+                request.graphqlVars = graphql.string("variables").orEmpty()
+                request.bodyMode = "graphql"
             }
         }
     }
@@ -841,7 +863,15 @@ class PostmanService {
                 }
             })
             add("url", urlJson(request))
-            if (request.bodyMode != "none" && request.body.isNotBlank()) {
+            if (request.bodyMode == "graphql") {
+                add("body", JsonObject().apply {
+                    addProperty("mode", "graphql")
+                    add("graphql", JsonObject().apply {
+                        addProperty("query", request.graphqlQuery)
+                        addProperty("variables", request.graphqlVars)
+                    })
+                })
+            } else if (request.bodyMode != "none" && request.body.isNotBlank()) {
                 add("body", JsonObject().apply {
                     addProperty("mode", "raw")
                     addProperty("raw", request.body)
@@ -854,17 +884,7 @@ class PostmanService {
             }
             authJson(request.auth)?.let { add("auth", it) }
         })
-        if (request.preRequest.isNotEmpty()) {
-            add("event", JsonArray().apply {
-                add(JsonObject().apply {
-                    addProperty("listen", "prerequest")
-                    add("script", JsonObject().apply {
-                        addProperty("type", "text/javascript")
-                        add("exec", JsonArray().apply { request.preRequest.forEach { add(it) } })
-                    })
-                })
-            })
-        }
+        scopeEvents(request.preRequest, request.postResponse)?.let { add("event", it) }
     }
 
     private fun urlJson(request: AstraRequest): JsonObject = JsonObject().apply {

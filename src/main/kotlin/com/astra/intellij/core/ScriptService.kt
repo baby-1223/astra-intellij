@@ -13,7 +13,6 @@ import org.mozilla.javascript.RhinoException
 import org.mozilla.javascript.Scriptable
 import org.mozilla.javascript.ScriptableObject
 import org.mozilla.javascript.Undefined
-import java.nio.charset.StandardCharsets
 import java.util.Locale
 
 /**
@@ -281,7 +280,7 @@ object ScriptService {
     }
 
     private fun responseObject(cx: Context, scope: Scriptable, result: HttpResult): ScriptableObject {
-        val text = String(result.body, StandardCharsets.UTF_8)
+        val text = ResponseCharset.decode(result)
         val obj = cx.newObject(scope) as ScriptableObject
         putProperty(obj, "code", result.status)
         putProperty(obj, "status", result.statusText)

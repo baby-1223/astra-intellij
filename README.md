@@ -13,7 +13,27 @@ A local-first API client for JetBrains IDEs. Design, send, and automate HTTP req
 - **Collection and folder runner** — iterate a collection or folder with configurable iteration count, delay, and data files (CSV / JSON), with a Postman-style results table.
 - **Import and export** — Postman collections, environments and data dumps, Insomnia collections, OpenAPI / Swagger JSON, and cURL commands.
 - **Starred collections** — star collections to pin them above the rest, and optionally show only starred items.
+- **Stability and data safety** — shared workspace schema with automatic migration, crash-safe unsaved drafts, large-response protection, and credentials kept in the system credential store.
 - **Local storage** — the workspace lives in the IDE configuration directory and is shared by every IDE window on the machine.
+
+## Reliability and data safety
+
+- **Shared, versioned workspace** — all IDE windows read and write one application-level workspace. A `schemaVersion` field lets newer plugin builds migrate older payloads instead of discarding them.
+- **Crash recovery** — unsaved request tabs are written to `drafts.json` under the IDE config directory and restored after a crash or restart.
+- **Credential store** — tokens, passwords, API keys, OAuth client secrets and refresh tokens are stored in the OS credential store; `astra.xml` only contains `secure:` placeholders.
+- **Large responses** — previews are capped at 1.5M characters with an explicit truncation notice, while **Save…** exports the complete response body.
+- **Charset detection** — responses are decoded from the declared charset, BOM or byte content (UTF-8 / UTF-16 / GB18030 and other JVM charsets), so non-UTF-8 endpoints display correctly.
+
+## What's new in 0.3.12
+
+- **Protocols** — GraphQL (query + variables), gRPC-Web payloads (JSON or base64 protobuf), SSE streaming, and WebSocket sessions with a message template library.
+- **Authentication** — OAuth 2.0 (authorization code + PKCE, client credentials, password grant, automatic token refresh) alongside Bearer, Basic, and API Key. Collection- and folder-level auth and scripts are inherited by requests.
+- **Response tools** — JSON tree with search, Cookies tab, saved response examples, line-by-line response diff, and large-response rendering caps with full-body export.
+- **Request controls** — per-request timeout, redirect policy, transport-level retries, SOCKS5 / HTTP proxy with bypass list and proxy auth, and mTLS client certificates.
+- **Runner and automation** — JUnit XML reports for CI, scheduled collection monitors, and Postman-style collection / folder runs.
+- **Productivity** — Copy as code (cURL, Python, JavaScript, Go, Java, IntelliJ HTTP Client), `.env` / CSV variable import and `.env` export, and `{{variable}}` completion.
+- **Stability and data safety** — shared versioned workspace, crash-safe unsaved drafts, credentials in the system credential store, and automatic charset detection (including GB18030 / UTF-16).
+- **Multi-window sync** — all IDE windows share one workspace and refresh when another window saves.
 
 ## Star and import / export compatibility
 

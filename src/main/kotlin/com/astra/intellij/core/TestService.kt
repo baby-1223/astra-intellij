@@ -3,7 +3,6 @@ package com.astra.intellij.core
 import com.astra.intellij.model.HttpResult
 import com.google.gson.JsonElement
 import com.google.gson.JsonParser
-import java.nio.charset.StandardCharsets
 
 data class AssertionResult(
     val assertion: String,
@@ -23,7 +22,7 @@ object TestService {
     private fun check(line: String, result: HttpResult): AssertionResult {
         val tokens = tokenize(line)
         if (tokens.isEmpty()) return AssertionResult(line, true, "")
-        val body = String(result.body, StandardCharsets.UTF_8)
+        val body = ResponseCharset.decode(result)
         return when (tokens[0].lowercase()) {
             "status" -> {
                 val (op, expected) = comparison(tokens, 1)

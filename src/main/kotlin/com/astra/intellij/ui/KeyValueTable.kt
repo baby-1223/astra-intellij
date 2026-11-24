@@ -134,4 +134,14 @@ class KeyValueTable : JPanel(BorderLayout()) {
             )
         }.filterTo(mutableListOf()) { it.key.isNotBlank() || it.value.isNotBlank() }
     }
+
+    /** Enables `{{variable}}` completion in the bulk editor and the shared cell editor. */
+    fun installVariableCompletion(provider: () -> Collection<String>) {
+        VariableCompletion.install(bulkEditor, provider)
+        (table.getDefaultEditor(String::class.java) as? javax.swing.DefaultCellEditor)?.let { editor ->
+            (editor.component as? javax.swing.text.JTextComponent)?.let {
+                VariableCompletion.install(it, provider)
+            }
+        }
+    }
 }

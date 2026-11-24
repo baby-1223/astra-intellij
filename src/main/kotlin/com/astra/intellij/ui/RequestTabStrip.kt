@@ -35,8 +35,8 @@ import javax.swing.SwingUtilities
  * the selected tab and scrolls with the mouse wheel.
  */
 class RequestTabStrip(
-    private val onSelectionChanged: (RequestSessionPanel) -> Unit,
-    private val onCloseRequested: (RequestSessionPanel) -> Unit,
+    private val onSelectionChanged: (TabSession) -> Unit,
+    private val onCloseRequested: (TabSession) -> Unit,
     private val onNewRequest: () -> Unit,
 ) : JPanel(BorderLayout()) {
     private val bar = JPanel().apply {
@@ -50,7 +50,7 @@ class RequestTabStrip(
         ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED,
     )
     private val content = JPanel(CardLayout())
-    private val headers = linkedMapOf<RequestSessionPanel, TabHeader>()
+    private val headers = linkedMapOf<TabSession, TabHeader>()
     private val headerRow = JPanel(BorderLayout())
     private val plusLabel = JBLabel("+")
     private val prevButton = ArrowButton(left = true) { selectRelative(-1) }.apply {
@@ -60,7 +60,7 @@ class RequestTabStrip(
         toolTipText = "Next tab (Alt+Right)"
     }
 
-    var selectedSession: RequestSessionPanel? = null
+    var selectedSession: TabSession? = null
         private set
 
     init {
@@ -240,7 +240,7 @@ class RequestTabStrip(
         override fun paintTrack(g: Graphics, c: JComponent, trackBounds: java.awt.Rectangle) = Unit
     }
 
-    fun addSession(session: RequestSessionPanel) {
+    fun addSession(session: TabSession) {
         val header = TabHeader(session)
         headers[session] = header
         bar.add(header)
@@ -251,7 +251,7 @@ class RequestTabStrip(
         selectSession(session)
     }
 
-    fun removeSession(session: RequestSessionPanel) {
+    fun removeSession(session: TabSession) {
         val header = headers[session] ?: return
         val index = headers.keys.indexOf(session)
         val wasSelected = selectedSession === session
@@ -273,7 +273,7 @@ class RequestTabStrip(
         updateNavigationState()
     }
 
-    fun selectSession(session: RequestSessionPanel) {
+    fun selectSession(session: TabSession) {
         if (selectedSession === session) {
             scrollToSelected()
             return
@@ -306,13 +306,13 @@ class RequestTabStrip(
         nextButton.isEnabled = index >= 0 && index < order.size - 1
     }
 
-    fun updateTitle(session: RequestSessionPanel) {
+    fun updateTitle(session: TabSession) {
         headers[session]?.refreshTitle()
         bar.revalidate()
         bar.repaint()
     }
 
-    private fun cardName(session: RequestSessionPanel): String =
+    private fun cardName(session: TabSession): String =
         System.identityHashCode(session).toString()
 
     private fun scrollToSelected() {
@@ -322,7 +322,7 @@ class RequestTabStrip(
         }
     }
 
-    private inner class TabHeader(private val session: RequestSessionPanel) : JPanel(BorderLayout()) {
+    private inner class TabHeader(private val session: TabSession) : JPanel(BorderLayout()) {
         private val label = JBLabel()
         private val closeLabel = JBLabel("\u00D7")
         private val baseFont = label.font
