@@ -11,8 +11,15 @@ A local-first API client for JetBrains IDEs. Design, send, and automate HTTP req
 - **Response viewer** — body, headers, cookies, test results, and per-request history with status, timing, and size.
 - **Environments and globals** — variables resolved at send time (`{{variable}}` syntax), switchable per environment.
 - **Collection and folder runner** — iterate a collection or folder with configurable iteration count, delay, and data files (CSV / JSON), with a Postman-style results table.
-- **Import and export** — Postman collections and environments, OpenAPI / Swagger JSON, and cURL commands.
-- **Local storage** — the workspace is stored in the project's `.idea/astra.xml`, so it can be shared and version-controlled with the project.
+- **Import and export** — Postman collections, environments and data dumps, Insomnia collections, OpenAPI / Swagger JSON, and cURL commands.
+- **Starred collections** — star collections to pin them above the rest, and optionally show only starred items.
+- **Local storage** — the workspace lives in the IDE configuration directory and is shared by every IDE window on the machine.
+
+## Star and import / export compatibility
+
+- The star flag is local metadata stored with the workspace, so it survives Astra workspace exports and imports; it is not part of the Postman or Insomnia formats.
+- Postman and Insomnia have no star concept: **stars are not written to those exports**, and **collections imported from them are always unstarred**.
+- Imports always add new collections; re-importing or syncing between IDE windows never overwrites a collection or clears stars you set locally.
 
 ## Requirements
 
