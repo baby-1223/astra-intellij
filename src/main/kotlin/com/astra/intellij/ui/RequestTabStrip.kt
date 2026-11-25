@@ -3,6 +3,7 @@ package com.astra.intellij.ui
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.scale.JBUIScale
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import java.awt.BasicStroke
@@ -182,8 +183,8 @@ class RequestTabStrip(
                 }
                 val centerX = width / 2.0
                 val centerY = height / 2.0
-                val arm = JBUI.scale(5f).toDouble()
-                val inset = JBUI.scale(2.5f).toDouble()
+                val arm = JBUIScale.scale(5f).toDouble()
+                val inset = JBUIScale.scale(2.5f).toDouble()
                 val path = Path2D.Float()
                 if (left) {
                     path.moveTo(centerX + inset, centerY - arm)
@@ -194,7 +195,7 @@ class RequestTabStrip(
                     path.lineTo(centerX + inset, centerY)
                     path.lineTo(centerX - inset, centerY + arm)
                 }
-                g2.stroke = BasicStroke(JBUI.scale(1.8f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+                g2.stroke = BasicStroke(JBUIScale.scale(1.8f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
                 g2.draw(path)
             } finally {
                 g2.dispose()
