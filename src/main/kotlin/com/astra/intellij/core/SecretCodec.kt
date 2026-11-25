@@ -58,9 +58,11 @@ fun forgetSecrets(data: WorkspaceData, forget: (String) -> Unit) {
     }
 }
 
-private fun requestsOf(data: WorkspaceData): Sequence<AstraRequest> = sequence {
-    data.collections.forEach { collection -> yieldAll(collection.allRequests()) }
-    data.history.forEach { yield(it.request) }
+private fun requestsOf(data: WorkspaceData): List<AstraRequest> {
+    val list = mutableListOf<AstraRequest>()
+    data.collections.forEach { list.addAll(it.allRequests()) }
+    data.history.forEach { list.add(it.request) }
+    return list
 }
 
 private fun readField(request: AstraRequest, field: String): String? = when (field) {

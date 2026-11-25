@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.astra.apiclient</id>
     <name>Astra</name>
-    <version>0.3.15</version>
+    <version>0.3.16</version>
     <vendor url="https://github.com/baby-1223/astra-intellij">APost</vendor>
 
     <icon>/icons/astra-plugin.svg</icon>
@@ -54,6 +54,10 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.3.16</h3>
+        <ul>
+            <li>Fix <code>SpillingKt</code> compatibility error on IntelliJ IDEA 2024.3+ — replaced Kotlin coroutine sequence with a plain list in <code>SecretCodec</code>.</li>
+        </ul>
         <h3>0.3.15</h3>
         <ul>
             <li>Form Data rows support <b>text</b> and <b>file</b> types, so multipart upload endpoints can be tested. Files are sent with their original name and content type.</li>

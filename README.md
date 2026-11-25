@@ -27,6 +27,10 @@ A local-first API client for JetBrains IDEs. Design, send, and automate HTTP req
 - **Large responses** — previews are capped at 1.5M characters with an explicit truncation notice, while **Save…** exports the complete response body.
 - **Charset detection** — responses are decoded from the declared charset, BOM or byte content (UTF-8 / UTF-16 / GB18030 and other JVM charsets), so non-UTF-8 endpoints display correctly.
 
+## What's new in 0.3.16
+
+- **Fix compatibility** — `SpillingKt` class-not-found on IntelliJ IDEA 2024.3+. Replaced Kotlin coroutine sequence in `SecretCodec` with a plain list.
+
 ## What's new in 0.3.15
 
 - **Multipart file upload** — Form Data rows now have a `text` / `file` type. Choose a file and Astra sends its bytes with the original file name and content type. Missing files fail with a clear message instead of sending an empty part.
