@@ -3,6 +3,7 @@ package com.astra.intellij.core
 import com.astra.intellij.model.AstraEnvironment
 import com.astra.intellij.model.AstraRequest
 import com.astra.intellij.model.AuthConfig
+import com.astra.intellij.model.FormField
 import com.astra.intellij.model.KeyValue
 import com.astra.intellij.model.RequestCollection
 import com.astra.intellij.model.RequestFolder
@@ -300,7 +301,7 @@ class InsomniaService {
                 request.formFields = body.array("params")?.mapNotNull { element ->
                     val field = element.asJsonObject
                     field.string("name")?.let { name ->
-                        KeyValue(
+                        FormField(
                             enabled = field.get("disabled")?.takeIf { it.isJsonPrimitive }?.asBoolean != true,
                             key = name,
                             value = fromInsomniaVariables(field.string("value").orEmpty()),
@@ -313,7 +314,7 @@ class InsomniaService {
                 request.formFields = body.array("params")?.mapNotNull { element ->
                     val field = element.asJsonObject
                     field.string("name")?.let { name ->
-                        KeyValue(
+                        FormField(
                             enabled = field.get("disabled")?.takeIf { it.isJsonPrimitive }?.asBoolean != true,
                             key = name,
                             value = fromInsomniaVariables(field.string("value").orEmpty()),

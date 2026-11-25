@@ -59,6 +59,28 @@ class TestServiceTest {
     }
 
     @Test
+    fun `jsonpath assertions support the extended path syntax`() {
+        val body = """{"data":{"items":[{"id":1,"name":"a"},{"id":2,"name":"b"}]},"meta":{"token":"t-1"}}"""
+        assertTrue(TestService.evaluate(listOf("jsonpath $.meta.token == t-1"), result(body = body)).single().passed)
+        assertTrue(TestService.evaluate(listOf("jsonpath \$['meta']['token'] exists"), result(body = body)).single().passed)
+        assertTrue(TestService.evaluate(listOf("jsonpath $.data.items[0].id == 1"), result(body = body)).single().passed)
+        assertTrue(TestService.evaluate(listOf("jsonpath $.data.items[-1].id == 2"), result(body = body)).single().passed)
+        assertTrue(TestService.evaluate(listOf("jsonpath $.data.items[*].id > 1"), result(body = body)).single().passed)
+        assertTrue(TestService.evaluate(listOf("jsonpath \$..token == t-1"), result(body = body)).single().passed)
+        assertFalse(TestService.evaluate(listOf("jsonpath $.data.items[*].id > 5"), result(body = body)).single().passed)
+    }
+
+    @Test
+    fun `extract lines capture json values and are skipped by assertions`() {
+        val body = """{"data":{"token":"abc","items":[{"id":7}]}}"""
+        val lines = listOf("extract token = $.data.token", "extract id = $.data.items[0].id", "status 200")
+
+        val extracted = TestService.extract(lines, result(body = body))
+        assertEquals(listOf("token" to "abc", "id" to "7"), extracted)
+        assertEquals(1, TestService.evaluate(lines, result(body = body)).size)
+    }
+
+    @Test
     fun `header assertions`() {
         assertTrue(TestService.evaluate(listOf("header Content-Type exists"), result()).single().passed)
         assertTrue(TestService.evaluate(listOf("header content-type contains json"), result()).single().passed)

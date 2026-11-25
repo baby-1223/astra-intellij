@@ -8,6 +8,23 @@ data class KeyValue(
     var value: String = "",
 )
 
+/**
+ * One row of a form body. Text rows send [value]; file rows send the bytes read from [filePath]
+ * together with the original [fileName].
+ */
+data class FormField(
+    var enabled: Boolean = true,
+    var key: String = "",
+    var value: String = "",
+    /** "text" or "file". */
+    var type: String = "text",
+    var filePath: String = "",
+    var fileName: String = "",
+) {
+    val isFile: Boolean
+        get() = type.equals("file", ignoreCase = true)
+}
+
 data class AuthConfig(
     var type: String = "none",
     var token: String = "",
@@ -43,7 +60,7 @@ data class AstraRequest(
     var headers: MutableList<KeyValue> = mutableListOf(),
     var bodyMode: String = "none",
     var body: String = "",
-    var formFields: MutableList<KeyValue> = mutableListOf(),
+    var formFields: MutableList<FormField> = mutableListOf(),
     var assertions: MutableList<String> = mutableListOf(),
     var preRequest: MutableList<String> = mutableListOf(),
     var postResponse: MutableList<String> = mutableListOf(),
@@ -321,6 +338,13 @@ fun AstraRequest.normalize(): AstraRequest {
     if (params == null) params = mutableListOf()
     if (headers == null) headers = mutableListOf()
     if (formFields == null) formFields = mutableListOf()
+    formFields.forEach { field ->
+        if (field.key == null) field.key = ""
+        if (field.value == null) field.value = ""
+        if (field.type == null || field.type.isBlank()) field.type = "text"
+        if (field.filePath == null) field.filePath = ""
+        if (field.fileName == null) field.fileName = ""
+    }
     if (assertions == null) assertions = mutableListOf()
     if (preRequest == null) preRequest = mutableListOf()
     if (postResponse == null) postResponse = mutableListOf()

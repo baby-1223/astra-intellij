@@ -7,7 +7,8 @@ A local-first API client for JetBrains IDEs. Design, send, and automate HTTP req
 ## Features
 
 - **Request workspace** — organize requests in collections and nested folders, with multi-tab editing and instant title sync.
-- **Full request editor** — method, URL, query params, headers, body (raw / form), authorization, pre-request scripts, and tests.
+- **Full request editor** — method, URL, query params, headers, body (raw / form / multipart with file upload), authorization, pre-request scripts, and tests.
+- **Assertions and extraction** — declarative `status` / `time` / `body` / `header` / `jsonpath` assertions, plus `extract token = $.data.token` to store response values into the active environment.
 - **Response viewer** — body, headers, cookies, test results, and per-request history with status, timing, and size.
 - **Environments and globals** — variables resolved at send time (`{{variable}}` syntax), switchable per environment.
 - **Collection and folder runner** — iterate a collection or folder with configurable iteration count, delay, and data files (CSV / JSON), with a Postman-style results table.
@@ -25,6 +26,13 @@ A local-first API client for JetBrains IDEs. Design, send, and automate HTTP req
 - **Credential store** — tokens, passwords, API keys, OAuth client secrets and refresh tokens are stored in the OS credential store; `astra.xml` only contains `secure:` placeholders.
 - **Large responses** — previews are capped at 1.5M characters with an explicit truncation notice, while **Save…** exports the complete response body.
 - **Charset detection** — responses are decoded from the declared charset, BOM or byte content (UTF-8 / UTF-16 / GB18030 and other JVM charsets), so non-UTF-8 endpoints display correctly.
+
+## What's new in 0.3.15
+
+- **Multipart file upload** — Form Data rows now have a `text` / `file` type. Choose a file and Astra sends its bytes with the original file name and content type. Missing files fail with a clear message instead of sending an empty part.
+- **JSONPath assertions** — the `jsonpath` keyword supports `$.a.b`, `$['a']`, `[0]`, `[-1]`, `[*]`, and recursive `$..key`; wildcard matches pass when any value satisfies the assertion.
+- **Extraction into variables** — add `extract token = $.data.token` to the Tests tab. Extracted values are written to the active environment and to the runner's variable scope, so later requests can use `{{token}}`.
+- **Post-response alias** — `set token jsonpath $.data.token` is accepted alongside `set token json $.data.token`.
 
 ## What's new in 0.3.14
 

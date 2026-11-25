@@ -3,8 +3,8 @@ package com.astra.intellij.core
 import com.astra.intellij.model.AstraRequest
 import com.astra.intellij.model.AstraSettings
 import com.astra.intellij.model.CookieData
+import com.astra.intellij.model.FormField
 import com.astra.intellij.model.HttpResult
-import com.astra.intellij.model.KeyValue
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.io.BufferedReader
@@ -167,7 +167,7 @@ class HttpService(
         } else when (request.bodyMode) {
             "urlencoded" -> HttpRequest.BodyPublishers.ofString(
                 request.formFields
-                    .filter { it.enabled && it.key.isNotBlank() }
+                    .filter { it.enabled && !it.isFile && it.key.isNotBlank() }
                     .joinToString("&") {
                         "${encodeQueryComponent(VariableResolver.resolve(it.key, vars))}=" +
                             encodeQueryComponent(VariableResolver.resolve(it.value, vars))
@@ -336,18 +336,49 @@ class HttpService(
         }
     }
 
-    private fun multipartBody(fields: List<KeyValue>, boundary: String, vars: Map<String, String>): ByteArray {
+    internal fun multipartBody(fields: List<FormField>, boundary: String, vars: Map<String, String>): ByteArray {
         val out = java.io.ByteArrayOutputStream()
         fields.filter { it.enabled && it.key.isNotBlank() }.forEach { field ->
             val name = VariableResolver.resolve(field.key, vars).replace("\"", "\\\"")
-            val value = VariableResolver.resolve(field.value, vars)
             out.write("--$boundary\r\n".toByteArray(StandardCharsets.UTF_8))
-            out.write("Content-Disposition: form-data; name=\"$name\"\r\n\r\n".toByteArray(StandardCharsets.UTF_8))
-            out.write(value.toByteArray(StandardCharsets.UTF_8))
+            if (field.isFile) {
+                val path = VariableResolver.resolve(field.filePath, vars).trim()
+                if (path.isEmpty()) {
+                    throw IllegalArgumentException("Choose a file for form field \"$name\"")
+                }
+                val file = java.io.File(path)
+                if (!file.isFile) throw IllegalArgumentException("File not found: $path")
+                val fileName = field.fileName.ifBlank { file.name }.replace("\"", "\\\"")
+                val contentType = java.nio.file.Files.probeContentType(file.toPath())
+                    ?: contentTypeForFile(file.name)
+                out.write(
+                    ("Content-Disposition: form-data; name=\"$name\"; filename=\"$fileName\"\r\n" +
+                        "Content-Type: $contentType\r\n\r\n").toByteArray(StandardCharsets.UTF_8),
+                )
+                out.write(file.readBytes())
+            } else {
+                val value = VariableResolver.resolve(field.value, vars)
+                out.write("Content-Disposition: form-data; name=\"$name\"\r\n\r\n".toByteArray(StandardCharsets.UTF_8))
+                out.write(value.toByteArray(StandardCharsets.UTF_8))
+            }
             out.write("\r\n".toByteArray(StandardCharsets.UTF_8))
         }
         out.write("--$boundary--\r\n".toByteArray(StandardCharsets.UTF_8))
         return out.toByteArray()
+    }
+
+    private fun contentTypeForFile(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+        "json" -> "application/json"
+        "xml" -> "application/xml"
+        "txt", "log", "csv" -> "text/plain"
+        "html", "htm" -> "text/html"
+        "png" -> "image/png"
+        "jpg", "jpeg" -> "image/jpeg"
+        "gif" -> "image/gif"
+        "webp" -> "image/webp"
+        "pdf" -> "application/pdf"
+        "zip" -> "application/zip"
+        else -> "application/octet-stream"
     }
 
     private fun parseCookies(headers: List<String>): MutableList<CookieData> =

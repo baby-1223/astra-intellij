@@ -25,6 +25,15 @@ object AstraFileChooser {
             if (chooser.showOpenDialog(parent) == JFileChooser.APPROVE_OPTION) chooser.selectedFile else null
         }
 
+    fun openAny(parent: Component?, title: String): File? =
+        withEnglishChooser {
+            val chooser = JFileChooser().apply {
+                dialogTitle = title
+                isAcceptAllFileFilterUsed = true
+            }
+            if (chooser.showOpenDialog(parent) == JFileChooser.APPROVE_OPTION) chooser.selectedFile else null
+        }
+
     fun save(parent: Component?, title: String, defaultName: String, extension: String): File? =
         withEnglishChooser {
             val chooser = JFileChooser().apply {

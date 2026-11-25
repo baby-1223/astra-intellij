@@ -2,6 +2,7 @@ package com.astra.intellij.core
 
 import com.astra.intellij.model.AstraRequest
 import com.astra.intellij.model.AuthConfig
+import com.astra.intellij.model.FormField
 import com.astra.intellij.model.KeyValue
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
@@ -167,8 +168,8 @@ class HttpServiceTest {
             url = "$baseUrl/json",
             bodyMode = "urlencoded",
             formFields = mutableListOf(
-                KeyValue(key = "user name", value = "{{name}}"),
-                KeyValue(enabled = false, key = "ignored", value = "yes"),
+                FormField(key = "user name", value = "{{name}}"),
+                FormField(enabled = false, key = "ignored", value = "yes"),
             ),
         )
 
@@ -186,7 +187,7 @@ class HttpServiceTest {
             method = "POST",
             url = "$baseUrl/json",
             bodyMode = "form-data",
-            formFields = mutableListOf(KeyValue(key = "field", value = "{{value}}")),
+            formFields = mutableListOf(FormField(key = "field", value = "{{value}}")),
         )
 
         val result = service.send(request, mapOf("value" to "hello")).result()
@@ -197,6 +198,55 @@ class HttpServiceTest {
         assertTrue(parts[2].contains("Content-Disposition: form-data; name=\"field\""))
         assertTrue(parts[2].contains("hello"))
         assertTrue(parts[2].contains("--\r\n"))
+    }
+
+    @Test
+    fun `sends multipart file part with file name and content type`() {
+        val file = java.nio.file.Files.createTempFile("astra-upload", ".txt")
+        java.nio.file.Files.writeString(file, "file-content-你好")
+        try {
+            val request = AstraRequest(
+                method = "POST",
+                url = "$baseUrl/json",
+                bodyMode = "form-data",
+                formFields = mutableListOf(
+                    FormField(key = "note", value = "hello"),
+                    FormField(
+                        key = "attachment",
+                        type = "file",
+                        filePath = file.toString(),
+                        fileName = "report.txt",
+                    ),
+                ),
+            )
+
+            val result = service.send(request, emptyMap()).result()
+            val body = String(result.body, StandardCharsets.UTF_8)
+
+            assertTrue(body.contains("name=\"note\"\r\n\r\nhello"))
+            assertTrue(body.contains("name=\"attachment\"; filename=\"report.txt\""))
+            assertTrue(body.contains("Content-Type: text/plain"))
+            assertTrue(body.contains("file-content-你好"))
+        } finally {
+            java.nio.file.Files.deleteIfExists(file)
+        }
+    }
+
+    @Test
+    fun `multipart file that does not exist fails with a clear message`() {
+        val request = AstraRequest(
+            method = "POST",
+            url = "$baseUrl/json",
+            bodyMode = "form-data",
+            formFields = mutableListOf(
+                FormField(key = "attachment", type = "file", filePath = "/tmp/astra-missing-file.bin"),
+            ),
+        )
+
+        val error = org.junit.jupiter.api.assertThrows<IllegalArgumentException> {
+            service.send(request, emptyMap())
+        }
+        assertTrue(error.message.orEmpty().contains("File not found"))
     }
 
     private fun HttpCall.result() = future.get(5, TimeUnit.SECONDS)

@@ -2,6 +2,7 @@ package com.astra.intellij.core
 
 import com.astra.intellij.model.AstraEnvironment
 import com.astra.intellij.model.AstraRequest
+import com.astra.intellij.model.FormField
 import com.astra.intellij.model.KeyValue
 import com.astra.intellij.model.RequestCollection
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -17,7 +18,7 @@ class ArchiveServiceTest {
         val collection = RequestCollection(name = "Orders").apply {
             requests.add(AstraRequest(name = "List", method = "GET", url = "https://api.test/orders").apply {
                 assertions.add("status 200")
-                formFields.add(KeyValue(key = "a", value = "b"))
+                formFields.add(FormField(key = "a", value = "b"))
             })
         }
         val environment = AstraEnvironment(name = "Prod").apply {

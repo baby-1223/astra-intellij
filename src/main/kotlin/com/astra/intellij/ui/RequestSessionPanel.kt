@@ -339,12 +339,15 @@ class RequestSessionPanel(
                                 snapshot.postResponse,
                                 result,
                                 vars,
-                                workspace.data.environments.firstOrNull {
-                                    it.id == workspace.data.activeEnvironmentId
-                                },
+                                environment,
                             )
-                            if (updates.isNotEmpty()) {
-                                response.appendStatus("Vars ${updates.size}")
+                            val extracted = TestService.extract(snapshot.assertions, result)
+                            extracted.forEach { (name, value) ->
+                                vars[name] = value
+                                environment?.variables?.set(name, value)
+                            }
+                            if (updates.isNotEmpty() || extracted.isNotEmpty()) {
+                                response.appendStatus("Vars ${updates.size + extracted.size}")
                             }
                             response.showTestResults(TestService.evaluate(snapshot.assertions, result))
                             HistoryEntry(

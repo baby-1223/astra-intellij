@@ -105,6 +105,10 @@ class CollectionRunner(
                 val outcome = try {
                     val result = call.future.get(settings.timeoutSeconds.toLong() + 10, TimeUnit.SECONDS)
                     PostResponseService.execute(request.postResponse, result, resolvedVars, environment)
+                    TestService.extract(request.assertions, result).forEach { (name, value) ->
+                        resolvedVars[name] = value
+                        environment?.variables?.set(name, value)
+                    }
                     RunItemResult(
                         request = request,
                         status = result.status,

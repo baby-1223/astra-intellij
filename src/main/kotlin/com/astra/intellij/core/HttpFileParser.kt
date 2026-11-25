@@ -1,6 +1,7 @@
 package com.astra.intellij.core
 
 import com.astra.intellij.model.AstraRequest
+import com.astra.intellij.model.FormField
 import com.astra.intellij.model.KeyValue
 import com.astra.intellij.model.RequestCollection
 import java.util.Locale
@@ -193,9 +194,9 @@ object HttpFileParser {
                 .map { pair ->
                     val separator = pair.indexOf('=')
                     if (separator < 0) {
-                        KeyValue(true, decode(pair), "")
+                        FormField(true, decode(pair), "")
                     } else {
-                        KeyValue(true, decode(pair.substring(0, separator)), decode(pair.substring(separator + 1)))
+                        FormField(true, decode(pair.substring(0, separator)), decode(pair.substring(separator + 1)))
                     }
                 }
                 .toMutableList()

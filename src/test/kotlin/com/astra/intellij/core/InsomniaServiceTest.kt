@@ -3,6 +3,7 @@ package com.astra.intellij.core
 import com.astra.intellij.model.AstraEnvironment
 import com.astra.intellij.model.AstraRequest
 import com.astra.intellij.model.AuthConfig
+import com.astra.intellij.model.FormField
 import com.astra.intellij.model.KeyValue
 import com.astra.intellij.model.RequestCollection
 import com.astra.intellij.model.RequestFolder
@@ -114,8 +115,8 @@ class InsomniaServiceTest {
             url = "https://api.test/form",
             bodyMode = "urlencoded",
             formFields = mutableListOf(
-                KeyValue(key = "a", value = "1"),
-                KeyValue(enabled = false, key = "b", value = "2"),
+                FormField(key = "a", value = "1"),
+                FormField(enabled = false, key = "b", value = "2"),
             ),
             auth = AuthConfig(
                 type = "apikey",

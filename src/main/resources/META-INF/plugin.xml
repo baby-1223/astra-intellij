@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.astra.apiclient</id>
     <name>Astra</name>
-    <version>0.3.14</version>
+    <version>0.3.15</version>
     <vendor url="https://github.com/baby-1223/astra-intellij">APost</vendor>
 
     <icon>/icons/astra-plugin.svg</icon>
@@ -54,6 +54,12 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.3.15</h3>
+        <ul>
+            <li>Form Data rows support <b>text</b> and <b>file</b> types, so multipart upload endpoints can be tested. Files are sent with their original name and content type.</li>
+            <li><b>jsonpath</b> assertions support bracket keys, negative indexes, wildcards and recursive descent.</li>
+            <li>Add <code>extract token = $.data.token</code> to the Tests tab to store response values in the active environment for later requests and the collection runner.</li>
+        </ul>
         <h3>0.3.14</h3>
         <ul>
             <li>New <b>Code</b> tab after <b>Post-response</b> with cURL, Python, JavaScript, Go, Java, and IDEA HTTP Client snippets for the current request.</li>

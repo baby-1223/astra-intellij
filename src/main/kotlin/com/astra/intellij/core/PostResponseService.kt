@@ -56,10 +56,10 @@ object PostResponseService {
         val mode = tokens.getOrNull(2)?.lowercase() ?: return null
         val body = ResponseCharset.decode(result)
         return when (mode) {
-            "json" -> {
+            "json", "jsonpath" -> {
                 val path = tokens.getOrNull(3) ?: return null
                 val root = runCatching { JsonParser.parseString(body) }.getOrNull() ?: return null
-                val element = TestService.jsonAt(root, path) ?: return null
+                val element = TestService.jsonAllAt(root, path).firstOrNull { !it.isJsonNull } ?: return null
                 if (element.isJsonPrimitive) element.asString else element.toString()
             }
             "header" -> {

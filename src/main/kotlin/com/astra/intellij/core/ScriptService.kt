@@ -2,6 +2,7 @@ package com.astra.intellij.core
 
 import com.astra.intellij.model.AstraEnvironment
 import com.astra.intellij.model.AstraRequest
+import com.astra.intellij.model.FormField
 import com.astra.intellij.model.HttpResult
 import com.astra.intellij.model.KeyValue
 import org.mozilla.javascript.BaseFunction
@@ -398,16 +399,19 @@ object ScriptService {
         }
     }
 
-    private fun formFields(body: Scriptable, name: String): MutableList<KeyValue> {
+    private fun formFields(body: Scriptable, name: String): MutableList<FormField> {
         val list = getProperty(body, name) as? Scriptable ?: return mutableListOf()
         return arrayValues(list).mapNotNull { item ->
             val field = item as? Scriptable ?: return@mapNotNull null
             val key = jsString(getProperty(field, "key"))
             if (key.isBlank()) return@mapNotNull null
-            KeyValue(
+            val type = jsString(getProperty(field, "type")).lowercase(Locale.ROOT).ifBlank { "text" }
+            FormField(
                 enabled = !jsBoolean(getProperty(field, "disabled")),
                 key = key,
                 value = jsString(getProperty(field, "value")),
+                type = if (type == "file") "file" else "text",
+                filePath = jsString(getProperty(field, "src")).ifBlank { jsString(getProperty(field, "filePath")) },
             )
         }.toMutableList()
     }

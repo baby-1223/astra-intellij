@@ -36,7 +36,7 @@ class RequestEditorPanel(
         arrayOf("None", "JSON", "Text", "Form Data", "URL Encoded", "GraphQL", "gRPC-Web"),
     )
     private val bodyArea = JTextArea(10, 40)
-    private val formTable = KeyValueTable()
+    private val formTable = FormDataTable()
     private val graphqlQueryArea = JTextArea(10, 40)
     private val graphqlVarsArea = JTextArea(6, 40)
     private val grpcPayloadArea = JTextArea(10, 40)
@@ -185,7 +185,9 @@ class RequestEditorPanel(
         })
         tabs.addTab("Tests", JPanel(BorderLayout(0, 4)).apply {
             add(JLabel("<html>One assertion per line: <b>status 200</b> · <b>time &lt; 500</b> · " +
-                "<b>body contains ok</b> · <b>json $.code == 0</b> · <b>header Content-Type contains json</b></html>").apply {
+                "<b>body contains ok</b> · <b>jsonpath $.code == 0</b> · <b>jsonpath $.items[*].id exists</b> · " +
+                "<b>header Content-Type contains json</b><br/>" +
+                "Extract a value into the active environment: <b>extract token = $.data.token</b></html>").apply {
                 foreground = UIUtil.getContextHelpForeground()
                 border = BorderFactory.createEmptyBorder(4, 4, 0, 4)
             }, BorderLayout.NORTH)
@@ -193,7 +195,7 @@ class RequestEditorPanel(
         })
         tabs.addTab("Post-response", JPanel(BorderLayout(0, 4)).apply {
             add(JLabel("<html>Runs after every response and saves values into the active environment: " +
-                "<b>set token json $.data.token</b> · <b>set sid header Set-Cookie</b> · " +
+                "<b>set token jsonpath $.data.token</b> · <b>set sid header Set-Cookie</b> · " +
                 "<b>set id body \"id=(\\w+)\"</b> · <b>set host value {{baseUrl}}</b> · <b>unset token</b></html>").apply {
                 foreground = UIUtil.getContextHelpForeground()
                 border = BorderFactory.createEmptyBorder(4, 4, 0, 4)
