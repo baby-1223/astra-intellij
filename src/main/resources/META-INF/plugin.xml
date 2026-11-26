@@ -2,7 +2,7 @@
     <id>com.astra.apiclient</id>
     <name>Astra</name>
     <version>0.4.0</version>
-    <vendor url="https://github.com/baby-1223/astra-intellij">APost</vendor>
+    <vendor url="https://github.com/compiler-says-no/astra-intellij">APost</vendor>
 
     <icon>/icons/astra-plugin.svg</icon>
 
@@ -49,7 +49,7 @@
 
         <h3>Support</h3>
         <p>
-            Source code, issue tracker, and release notes: <a href="https://github.com/baby-1223/astra-intellij">github.com/baby-1223/astra-intellij</a>
+            Source code, issue tracker, and release notes: <a href="https://github.com/compiler-says-no/astra-intellij">github.com/compiler-says-no/astra-intellij</a>
         </p>
     ]]></description>
 

@@ -2,7 +2,7 @@
 
 A local-first API client for JetBrains IDEs. Design, send, and automate HTTP requests without leaving your IDE — no account, no cloud sync, no telemetry.
 
-[![Build](https://github.com/baby-1223/astra-intellij/actions/workflows/build.yml/badge.svg)](https://github.com/baby-1223/astra-intellij/actions/workflows/build.yml)
+[![Build](https://github.com/compiler-says-no/astra-intellij/actions/workflows/build.yml/badge.svg)](https://github.com/compiler-says-no/astra-intellij/actions/workflows/build.yml)
 
 ## Features
 
@@ -95,7 +95,7 @@ Search for **Astra** in `Settings → Plugins → Marketplace`, or install from 
 
 ### From a release build
 
-1. Download `astra-intellij-<version>-signed.zip` from [Releases](https://github.com/baby-1223/astra-intellij/releases).
+1. Download `astra-intellij-<version>-signed.zip` from [Releases](https://github.com/compiler-says-no/astra-intellij/releases).
 2. In the IDE: `Settings → Plugins → ⚙ → Install Plugin from Disk…`
 3. Select the zip and restart the IDE.
 
