@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.astra.apiclient</id>
     <name>Astra</name>
-    <version>0.3.17</version>
+    <version>0.4.0</version>
     <vendor url="https://github.com/baby-1223/astra-intellij">APost</vendor>
 
     <icon>/icons/astra-plugin.svg</icon>
@@ -54,6 +54,15 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.4.0</h3>
+        <ul>
+            <li>Spring controller generation rewritten: fully qualified and composed annotations, path constants, multi-path mappings, inherited class paths and controller interfaces.</li>
+            <li>Cross-file DTOs, Java records, Kotlin data classes, inheritance, non-private fields, <code>@JsonProperty</code> names and enum samples.</li>
+            <li><code>consumes</code> aware bodies: JSON, XML, text, <code>x-www-form-urlencoded</code> and <code>multipart/form-data</code> with <code>@RequestPart</code> / <code>MultipartFile</code>.</li>
+            <li><code>@ModelAttribute</code>, unannotated DTO query parameters and merged <code>@CookieValue</code> headers.</li>
+            <li>Path variables use <code>{{id}}</code> placeholders with sample values added to the environment; repeated generation updates the existing collection.</li>
+            <li>Spring profiles, <code>server.ssl.enabled</code> and non-UTF-8 sources are supported; comments, raw strings and nested classes no longer create phantom endpoints.</li>
+        </ul>
         <h3>0.3.17</h3>
         <ul>
             <li>Spring controller generation now renders generic request bodies: <code>Result&lt;User&gt;</code>, <code>List&lt;User&gt;</code> and <code>Map&lt;String, User&gt;</code> produce real field samples instead of <code>{}</code>.</li>

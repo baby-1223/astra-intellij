@@ -1,9 +1,9 @@
 package com.astra.intellij.core
 
 import com.astra.intellij.model.AstraRequest
+import com.astra.intellij.model.FormField
 import com.astra.intellij.model.KeyValue
 import com.astra.intellij.model.RequestCollection
-import java.util.Locale
 
 /** One HTTP operation declared by a Spring controller method. */
 data class ControllerEndpoint(
@@ -12,7 +12,18 @@ data class ControllerEndpoint(
     val path: String,
     val headers: List<Pair<String, String>> = emptyList(),
     val query: List<Pair<String, String>> = emptyList(),
+    val pathVariables: List<Pair<String, String>> = emptyList(),
     val body: String? = null,
+    val bodyMode: String = "none",
+    val formFields: List<SpringFormField> = emptyList(),
+    val contentType: String? = null,
+)
+
+data class SpringFormField(
+    val name: String,
+    val value: String,
+    val file: Boolean = false,
+    val fileName: String = "",
 )
 
 data class ControllerSpec(
@@ -24,12 +35,13 @@ data class ControllerSpec(
 /**
  * Reads Spring MVC controllers from Java / Kotlin source text without the PSI.
  *
- * Keeping the parser text-based means it can be unit tested without the IDE runtime and works
- * even before the project has finished indexing.
+ * The parser is text-based so it can be unit tested without the IDE runtime and works before the
+ * project has finished indexing. Passing [sources] lets DTOs declared in other files resolve too.
  */
 object SpringControllerParser {
-    private val controllers = Regex("@(RestController|Controller)\\b")
-    private val mappings = setOf(
+    private val stringLiteral = Regex("\"([^\"]*)\"")
+    private val controllerAnnotation = Regex("@(?:[\\w.]+\\.)?(RestController|Controller)\\b")
+    private val standardMappings = setOf(
         "GetMapping",
         "PostMapping",
         "PutMapping",
@@ -37,101 +49,105 @@ object SpringControllerParser {
         "DeleteMapping",
         "RequestMapping",
     )
-    private val stringLiteral = Regex("\"([^\"]*)\"")
-    private val methodToken = Regex("RequestMethod\\.(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE)")
+    private val simpleTypes = setOf(
+        "String", "CharSequence", "Char", "char",
+        "Int", "Integer", "Long", "Short", "Byte", "BigInteger",
+        "int", "long", "short", "byte",
+        "Double", "Float", "BigDecimal", "double", "float",
+        "Boolean", "boolean", "LocalDate", "LocalDateTime", "Instant",
+        "OffsetDateTime", "ZonedDateTime", "UUID", "Date", "Timestamp", "Time",
+    )
+    private val ignoredParameterTypes = setOf(
+        "HttpServletRequest", "HttpServletResponse", "ServletRequest", "ServletResponse",
+        "HttpSession", "Principal", "Authentication", "BindingResult", "Errors",
+        "Model", "ModelMap", "ModelAndView", "UriComponentsBuilder", "Locale",
+        "LocaleContext", "SessionStatus", "WebRequest", "NativeWebRequest",
+        "MultipartHttpServletRequest", "RedirectAttributes", "ServerHttpRequest",
+        "ServerHttpResponse", "ServerWebExchange",
+    )
 
-    fun looksLikeController(source: String): Boolean =
-        controllers.containsMatchIn(source) && mappings.any { source.contains("@$it") }
+    fun looksLikeController(source: String): Boolean {
+        val masked = SpringSourceIndex.maskSource(source)
+        if (!controllerAnnotation.containsMatchIn(masked)) return false
+        return Regex("@[A-Z][A-Za-z0-9_]*").containsMatchIn(masked)
+    }
 
-    fun parse(source: String, fileName: String = "Controller"): ControllerSpec? {
-        val controller = controllers.find(source) ?: return null
-        val classMatch = Regex("\\bclass\\s+(\\w+)").find(source, controller.range.last + 1) ?: return null
-        val className = classMatch.groupValues[1]
-        val bodyStart = source.indexOf('{', classMatch.range.last + 1)
-        if (bodyStart < 0) return null
-        val bodyEnd = matchingBrace(source, bodyStart) ?: source.length
+    fun parse(
+        source: String,
+        fileName: String = "Controller",
+        sources: List<SpringSource> = emptyList(),
+    ): ControllerSpec? = parseAll(source, fileName, sources).firstOrNull()
 
-        val basePath = mappingAnnotations(source, controller.range.last + 1, classMatch.range.first)
-            .lastOrNull { it.name == "RequestMapping" }
-            ?.let { firstString(it.attributes) }
-            .orEmpty()
+    fun parseAll(
+        source: String,
+        fileName: String = "Controller",
+        sources: List<SpringSource> = emptyList(),
+    ): List<ControllerSpec> {
+        val current = SpringSource(fileName, source)
+        val index = SpringSourceIndex(listOf(current) + sources.filter { it.name != fileName })
+        val specs = mutableListOf<ControllerSpec>()
 
-        val endpoints = mappingAnnotations(source, bodyStart, bodyEnd).mapNotNull { annotation ->
-            val signature = methodSignature(source, annotation.end, bodyEnd) ?: return@mapNotNull null
-            val method = httpMethod(annotation)
-            val declaredPath = firstString(annotation.attributes).orEmpty()
-            val parameters = parameterList(signature.parameters)
-            val pathVariables = mutableListOf<Pair<String, String>>()
-            val query = mutableListOf<Pair<String, String>>()
-            val headers = mutableListOf<Pair<String, String>>()
-            var body: String? = null
+        val annotated = collectControllers(index, current)
+        annotated.forEach { type -> controllerSpec(index, type)?.let { specs += it } }
 
-            parameters.forEach { parameter ->
-                val modifiers = parameterAnnotations(parameter)
-                val declaration = parameter.replace(Regex("@\\w+(\\([^)]*\\))?"), " ").trim()
-                val name = parameterName(parameter, declaration)
-                val type = parameterType(declaration)
-                when {
-                    "@RequestBody" in modifiers -> {
-                        body = bodySample(type, source)
-                    }
-                    "@RequestPart" in modifiers || type.contains("MultipartFile") -> Unit
-                    "@PathVariable" in modifiers && name.isNotBlank() -> {
-                        pathVariables += name to sampleForType(type)
-                    }
-                    "@RequestParam" in modifiers && name.isNotBlank() -> {
-                        val default = annotationString(parameter, "defaultValue")
-                        query += name to (default ?: sampleForType(type))
-                    }
-                    "@RequestHeader" in modifiers && name.isNotBlank() -> {
-                        val headerName = annotationString(parameter, "name")
-                            ?: annotationString(parameter, "value")
-                            ?: name
-                        headers += headerName to (annotationString(parameter, "defaultValue") ?: "")
-                    }
-                    "@CookieValue" in modifiers && name.isNotBlank() -> {
-                        headers += "Cookie" to "$name=${sampleForType(type)}"
-                    }
+        // No annotated type in this file: honour implementations of a controller interface.
+        if (specs.isEmpty()) {
+            index.typesIn(current).forEach { type ->
+                val superController = type.superTypes.firstNotNullOfOrNull { index.find(it) }
+                    ?.takeIf { isController(it) }
+                if (superController != null) {
+                    controllerSpec(index, superController, displayName = type.name)?.let { specs += it }
                 }
             }
-
-            var path = joinPath(basePath, declaredPath)
-            pathVariables.forEach { (key, value) ->
-                path = path.replace("{$key}", value)
-            }
-            ControllerEndpoint(
-                name = signature.name,
-                method = method,
-                path = path,
-                headers = headers,
-                query = query,
-                body = body,
-            )
         }
-        if (endpoints.isEmpty()) return null
-        return ControllerSpec(className.ifBlank { fileName }, basePath, endpoints)
+        return specs
     }
 
     /** Builds a collection whose requests point at `{{baseUrl}}` resolved from the environment. */
     fun toCollection(spec: ControllerSpec): RequestCollection {
         val collection = RequestCollection(name = spec.className)
+        val usedNames = mutableMapOf<String, Int>()
         spec.endpoints.forEach { endpoint ->
+            val baseName = endpoint.name.ifBlank { "request" }
+            val count = usedNames.merge(baseName, 1, Int::plus) ?: 1
+            val name = if (count == 1) baseName else "$baseName ($count)"
             val request = AstraRequest(
-                name = endpoint.name,
+                name = name,
                 method = endpoint.method,
                 url = "{{baseUrl}}${endpoint.path}",
             )
             request.headers = endpoint.headers
+                .distinctBy { it.first.lowercase() }
                 .map { (key, value) -> KeyValue(true, key, value) }
                 .toMutableList()
             request.params = endpoint.query
                 .map { (key, value) -> KeyValue(true, key, value) }
                 .toMutableList()
-            endpoint.body?.let { body ->
-                request.bodyMode = "json"
-                request.body = body
-                if (request.headers.none { it.key.equals("Content-Type", ignoreCase = true) }) {
-                    request.headers += KeyValue(true, "Content-Type", "application/json")
+            request.bodyMode = endpoint.bodyMode
+            when (endpoint.bodyMode) {
+                "form-data", "urlencoded" -> {
+                    request.formFields = endpoint.formFields.map { field ->
+                        if (field.file) {
+                            FormField(
+                                enabled = true,
+                                key = field.name,
+                                type = "file",
+                                fileName = field.fileName,
+                                filePath = "",
+                            )
+                        } else {
+                            FormField(enabled = true, key = field.name, value = field.value)
+                        }
+                    }.toMutableList()
+                }
+                "json", "text" -> request.body = endpoint.body.orEmpty()
+                else -> Unit
+            }
+            endpoint.contentType?.takeIf { it.isNotBlank() }?.let { contentType ->
+                if (endpoint.bodyMode != "form-data" &&
+                    request.headers.none { it.key.equals("Content-Type", ignoreCase = true) }
+                ) {
+                    request.headers += KeyValue(true, "Content-Type", contentType)
                 }
             }
             collection.requests += request
@@ -139,93 +155,351 @@ object SpringControllerParser {
         return collection
     }
 
-    private data class AnnotationHit(
-        val name: String,
-        val attributes: String,
-        val start: Int,
-        val end: Int,
-    )
+    private fun collectControllers(index: SpringSourceIndex, source: SpringSource): List<SpringType> =
+        index.typesIn(source).filter { isController(it) }
 
-    private data class MethodSignature(val name: String, val parameters: String)
+    private fun isController(type: SpringType): Boolean =
+        type.classAnnotations.any { it.name == "RestController" || it.name == "Controller" }
 
-    private fun mappingAnnotations(source: String, from: Int, to: Int): List<AnnotationHit> {
-        val result = mutableListOf<AnnotationHit>()
-        val pattern = Regex("@(${mappings.joinToString("|")})\\b")
-        pattern.findAll(source, from).forEach { match ->
-            if (match.range.first >= to) return@forEach
-            var cursor = match.range.last + 1
-            while (cursor < source.length && source[cursor].isWhitespace()) cursor++
-            if (cursor < source.length && source[cursor] == '(') {
-                val close = matchingParen(source, cursor) ?: return@forEach
-                result += AnnotationHit(
-                    match.groupValues[1],
-                    source.substring(cursor + 1, close),
-                    match.range.first,
-                    close + 1,
-                )
-            } else {
-                result += AnnotationHit(match.groupValues[1], "", match.range.first, match.range.last + 1)
+    private fun controllerSpec(
+        index: SpringSourceIndex,
+        type: SpringType,
+        displayName: String = type.name,
+    ): ControllerSpec? {
+        val classPaths = classPaths(index, type)
+        val endpoints = mutableListOf<ControllerEndpoint>()
+        index.members(type).methods.forEach { method ->
+            mappingAnnotations(index, method).forEach { mapping ->
+                val methodPaths = mappingPaths(index, mapping).ifEmpty { listOf("") }
+                val consumes = mediaTypes(index, mapping, "consumes")
+                val httpMethod = httpMethodOf(index, mapping)
+                val params = parseParameters(index, method.parameters, consumes)
+                methodPaths.forEach { methodPath ->
+                    classPaths.forEach { classPath ->
+                        val joined = joinPath(classPath, methodPath)
+                        val path = joined.replace(Regex("\\{(\\w+)}"), "{{$1}}")
+                        endpoints += ControllerEndpoint(
+                            name = method.name,
+                            method = httpMethod,
+                            path = path,
+                            headers = params.headers,
+                            query = params.query,
+                            pathVariables = params.pathVariables,
+                            body = params.body,
+                            bodyMode = params.bodyMode,
+                            formFields = params.formFields,
+                            contentType = params.contentType,
+                        )
+                    }
+                }
             }
         }
-        return result.sortedBy { it.start }
+        if (endpoints.isEmpty()) return null
+        return ControllerSpec(displayName, classPaths.firstOrNull().orEmpty(), endpoints)
     }
 
-    private fun httpMethod(annotation: AnnotationHit): String {
+    private fun classPaths(index: SpringSourceIndex, type: SpringType, depth: Int = 0): List<String> {
+        if (depth > 8) return listOf("")
+        val own = index.classAnnotationsOf(type)
+            .filter { it.name == "RequestMapping" }
+            .flatMap { pathsOf(index, it.arguments) }
+        if (own.isNotEmpty()) return own
+        type.superTypes.forEach { parentName ->
+            index.find(parentName)?.let { parent ->
+                val inherited = classPaths(index, parent, depth + 1)
+                if (inherited.any { it.isNotBlank() }) return inherited
+            }
+        }
+        return listOf("")
+    }
+
+    private data class ParsedParameters(
+        val headers: List<Pair<String, String>>,
+        val query: List<Pair<String, String>>,
+        val pathVariables: List<Pair<String, String>>,
+        val body: String?,
+        val bodyMode: String,
+        val formFields: List<SpringFormField>,
+        val contentType: String?,
+    )
+
+    private fun parseParameters(
+        index: SpringSourceIndex,
+        raw: String,
+        consumes: List<String>,
+    ): ParsedParameters {
+        val query = mutableListOf<Pair<String, String>>()
+        val headers = mutableListOf<Pair<String, String>>()
+        val cookies = mutableListOf<String>()
+        val pathVariables = mutableListOf<Pair<String, String>>()
+        val formFields = mutableListOf<SpringFormField>()
+        var bodyType: String? = null
+        var bodyValue: String? = null
+        var forceMultipart = false
+        val media = consumes.firstOrNull()?.substringBefore(';')?.trim().orEmpty()
+        val formMode = media.contains("multipart/form-data", ignoreCase = true) ||
+            media.contains("x-www-form-urlencoded", ignoreCase = true)
+
+        topLevelParameters(raw).forEach { parameter ->
+            val parsed = SpringSourceIndex.extractAnnotations(parameter)
+            val annotations = parsed.annotations
+            val declaration = parsed.remaining
+            val name = parameterName(annotations, declaration)
+            val type = parameterType(declaration)
+            val annotationNames = annotations.map { it.name }.toSet()
+            val simple = typeSimpleName(type)
+            when {
+                "RequestBody" in annotationNames -> {
+                    if (bodyType == null) {
+                        bodyType = type
+                        bodyValue = bodySample(index, type, media)
+                    }
+                }
+                "RequestPart" in annotationNames -> {
+                    forceMultipart = true
+                    val partName = annotationValue(annotations, "RequestPart") ?: name
+                    if (partName.isNotBlank()) {
+                        val isFile = simple.contains("MultipartFile") || simple == "Part" ||
+                            type.contains("MultipartFile") || type.endsWith("[]") && simple == "Part"
+                        formFields += SpringFormField(
+                            name = partName,
+                            value = if (isFile) "" else bodySample(index, type, "application/json"),
+                            file = isFile,
+                        )
+                    }
+                }
+                simple.contains("MultipartFile") || simple == "Part" -> {
+                    forceMultipart = true
+                    if (name.isNotBlank()) formFields += SpringFormField(name, "", file = true)
+                }
+                "PathVariable" in annotationNames -> {
+                    if (name.isNotBlank()) pathVariables += name to sampleForType(type)
+                }
+                "RequestParam" in annotationNames -> {
+                    if (name.isNotBlank() && simple !in mapTypes) {
+                        val default = annotationAttribute(annotations, "RequestParam", "defaultValue")
+                        query += name to (default ?: sampleForType(type))
+                    }
+                }
+                "RequestHeader" in annotationNames -> {
+                    val headerName = annotationValue(annotations, "RequestHeader") ?: name
+                    if (headerName.isNotBlank()) {
+                        val default = annotationAttribute(annotations, "RequestHeader", "defaultValue").orEmpty()
+                        headers += headerName to default
+                    }
+                }
+                "CookieValue" in annotationNames -> {
+                    if (name.isNotBlank()) cookies += "$name=${sampleForType(type)}"
+                }
+                "ModelAttribute" in annotationNames -> {
+                    addModelFields(index, type, if (formMode) formFields else null, query)
+                }
+                simple in ignoredParameterTypes -> Unit
+                simple in mapTypes -> Unit
+                simple.isBlank() -> Unit
+                simple in simpleTypes -> if (name.isNotBlank()) query += name to sampleForType(type)
+                else -> addModelFields(index, type, if (formMode) formFields else null, query)
+            }
+        }
+
+        if (cookies.isNotEmpty()) headers += "Cookie" to cookies.joinToString("; ")
+
+        var mode = when {
+            forceMultipart -> "form-data"
+            media.contains("multipart/form-data", ignoreCase = true) -> "form-data"
+            media.contains("x-www-form-urlencoded", ignoreCase = true) -> "urlencoded"
+            bodyType == null -> "none"
+            typeSimpleName(bodyType!!) in setOf("String", "CharSequence") -> "text"
+            media.contains("xml", ignoreCase = true) -> "text"
+            media.startsWith("text/", ignoreCase = true) -> "text"
+            else -> "json"
+        }
+
+        if ((mode == "form-data" || mode == "urlencoded") && bodyType != null && formFields.isEmpty()) {
+            addModelFields(index, bodyType!!, formFields, null)
+        }
+        if (mode == "form-data" && formFields.isEmpty() && bodyType != null) {
+            formFields += SpringFormField("body", bodySample(index, bodyType!!, "application/json"))
+        }
+
+        val body = when (mode) {
+            "json" -> bodyValue ?: bodyType?.let { index.json(it) }
+            "text" -> {
+                if (bodyType != null && typeSimpleName(bodyType!!) in setOf("String", "CharSequence")) {
+                    SpringSourceIndex.scalarText(typeSimpleName(bodyType!!)) ?: bodyValue
+                } else {
+                    bodyType?.let { xmlOrText(index, it, media) } ?: bodyValue
+                }
+            }
+            else -> null
+        }
+        val contentType = when {
+            mode == "form-data" -> null
+            media.isNotBlank() -> media
+            mode == "json" -> "application/json"
+            mode == "urlencoded" -> "application/x-www-form-urlencoded"
+            mode == "text" -> "text/plain"
+            else -> null
+        }
+        return ParsedParameters(
+            headers = headers,
+            query = query,
+            pathVariables = pathVariables,
+            body = body,
+            bodyMode = mode,
+            formFields = formFields,
+            contentType = contentType,
+        )
+    }
+
+    private fun addModelFields(
+        index: SpringSourceIndex,
+        type: String,
+        formFields: MutableList<SpringFormField>?,
+        query: MutableList<Pair<String, String>>?,
+    ) {
+        if (typeSimpleName(type) in mapTypes) return
+        val fields = index.fields(type).filter { it.type !in mapTypes && it.type !in collectionTypes }
+        if (fields.isEmpty()) return
+        fields.forEach { field ->
+            val value = sampleForType(field.type)
+            if (formFields != null) {
+                formFields += SpringFormField(field.jsonName, value)
+            } else {
+                query?.add(field.jsonName to value)
+            }
+        }
+    }
+
+    private fun bodySample(index: SpringSourceIndex, type: String, media: String): String {
+        val normalized = type.trim().removePrefix("?").trimEnd('?', '!')
+        if (normalized.endsWith("[]")) {
+            return "[\n    " + bodySample(index, normalized.removeSuffix("[]"), media) + "\n  ]"
+        }
+        val raw = SpringSourceIndex.simpleName(normalized)
+        SpringSourceIndex.scalarJson(raw)?.let { return it }
+        if (media.contains("xml", ignoreCase = true)) return index.xml(normalized)
+        if (raw in collectionTypes) {
+            val element = SpringSourceIndex.typeArguments(normalized).firstOrNull() ?: return "[]"
+            return "[\n    " + bodySample(index, element, media) + "\n  ]"
+        }
+        return index.json(normalized)
+    }
+
+    private fun xmlOrText(index: SpringSourceIndex, type: String, media: String): String =
+        if (media.contains("xml", ignoreCase = true)) index.xml(type) else sampleForType(type)
+
+    private fun mappingAnnotations(index: SpringSourceIndex, method: SpringMethod): List<SpringAnnotation> =
+        method.annotations.filter { annotation ->
+            annotation.name in standardMappings || index.mappingKind(annotation.name) != null
+        }
+
+    private fun httpMethodOf(index: SpringSourceIndex, annotation: SpringAnnotation): String {
         when (annotation.name) {
             "GetMapping" -> return "GET"
             "PostMapping" -> return "POST"
             "PutMapping" -> return "PUT"
             "PatchMapping" -> return "PATCH"
             "DeleteMapping" -> return "DELETE"
+            "RequestMapping" -> {
+                val declared = annotationAttribute(listOf(annotation), "RequestMapping", "method")
+                val token = declared?.let { Regex("(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE)").find(it)?.groupValues?.get(1) }
+                return token ?: "GET"
+            }
         }
-        methodToken.find(annotation.attributes)?.let { return it.groupValues[1] }
-        return "GET"
+        return index.mappingKind(annotation.name) ?: "GET"
     }
 
-    /** Locates the method name and parameter list that follow an annotation. */
-    private fun methodSignature(source: String, from: Int, limit: Int): MethodSignature? {
-        var cursor = from
-        while (cursor < limit) {
-            val char = source[cursor]
-            when {
-                char.isWhitespace() -> cursor++
-                char == '@' -> {
-                    val nameEnd = run {
-                        var index = cursor + 1
-                        while (index < limit && (source[index].isLetterOrDigit() || source[index] == '.')) index++
-                        index
-                    }
-                    var next = nameEnd
-                    while (next < limit && source[next].isWhitespace()) next++
-                    cursor = if (next < limit && source[next] == '(') {
-                        (matchingParen(source, next) ?: return null) + 1
-                    } else {
-                        nameEnd
-                    }
-                }
-                char == '<' -> cursor = (matchingAngle(source, cursor) ?: return null) + 1
-                char == '(' -> {
-                    val close = matchingParen(source, cursor) ?: return null
-                    val prefix = source.substring(from, cursor)
-                    val name = Regex("(\\w+)\\s*$").find(prefix.trimEnd())?.groupValues?.get(1) ?: return null
-                    return MethodSignature(name, source.substring(cursor + 1, close))
-                }
-                char == '{' || char == '}' || char == ';' -> return null
-                else -> cursor++
+    private fun mappingPaths(index: SpringSourceIndex, annotation: SpringAnnotation): List<String> =
+        pathsOf(index, annotation.arguments)
+
+    private fun pathsOf(index: SpringSourceIndex, arguments: String): List<String> {
+        if (arguments.isBlank()) return emptyList()
+        val args = parseArguments(arguments)
+        val value = args.named["value"] ?: args.named["path"] ?: args.positional.firstOrNull()
+        return stringValues(index, value.orEmpty())
+    }
+
+    private fun mediaTypes(index: SpringSourceIndex, annotation: SpringAnnotation, attribute: String): List<String> {
+        val args = parseArguments(annotation.arguments)
+        val raw = args.named[attribute] ?: return emptyList()
+        return stringValues(index, raw).map { it.substringBefore(';').trim() }.filter { it.isNotEmpty() }
+    }
+
+    private fun stringValues(index: SpringSourceIndex, expression: String): List<String> {
+        var text = expression.trim()
+        if (text.isEmpty()) return emptyList()
+        if ((text.startsWith("{") && text.endsWith("}")) || (text.startsWith("[") && text.endsWith("]"))) {
+            return SpringSourceIndex.splitTopLevel(text.substring(1, text.length - 1), ',')
+                .flatMap { stringValues(index, it) }
+        }
+        Regex("^(?:listOf|arrayOf|setOf|mutableListOf|listOfNotNull)\\s*\\(([\\s\\S]*)\\)$").find(text)?.let { match ->
+            return SpringSourceIndex.splitTopLevel(match.groupValues[1], ',')
+                .flatMap { stringValues(index, it) }
+        }
+        if (text.startsWith("\"")) {
+            val literal = stringLiteral.find(text)?.groupValues?.get(1) ?: return emptyList()
+            val plus = text.substringAfter('"').trim()
+            return if (plus.startsWith("+")) {
+                listOf(literal) + stringValues(index, plus.removePrefix("+").trim())
+            } else {
+                listOf(literal)
+            }
+        }
+        if (text.contains("+")) {
+            return text.split('+').flatMap { stringValues(index, it) }
+        }
+        return index.constant(text)?.let { listOf(it) } ?: emptyList()
+    }
+
+    private data class ArgumentList(val named: Map<String, String>, val positional: List<String>)
+
+    private fun parseArguments(raw: String): ArgumentList {
+        val named = LinkedHashMap<String, String>()
+        val positional = mutableListOf<String>()
+        SpringSourceIndex.splitTopLevel(raw, ',').forEach { part ->
+            val trimmed = part.trim()
+            if (trimmed.isEmpty()) return@forEach
+            val match = Regex("^([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*([\\s\\S]*)$").find(trimmed)
+            if (match != null) {
+                named[match.groupValues[1]] = match.groupValues[2].trim()
+            } else {
+                positional += trimmed
+            }
+        }
+        return ArgumentList(named, positional)
+    }
+
+    private fun annotationAttribute(
+        annotations: List<SpringAnnotation>,
+        annotationName: String,
+        attribute: String,
+    ): String? {
+        val annotation = annotations.firstOrNull { it.name == annotationName } ?: return null
+        val args = parseArguments(annotation.arguments)
+        args.named[attribute]?.let { return stringLiteral.find(it)?.groupValues?.get(1) ?: it }
+        if (attribute == "value") {
+            return args.positional.firstOrNull()?.let {
+                stringLiteral.find(it)?.groupValues?.get(1) ?: it
             }
         }
         return null
     }
 
-    private fun parameterList(raw: String): List<String> =
-        splitTopLevel(raw, ',').map { it.trim() }.filter { it.isNotEmpty() }
+    private fun annotationValue(annotations: List<SpringAnnotation>, annotationName: String): String? {
+        val annotation = annotations.firstOrNull { it.name == annotationName } ?: return null
+        val args = parseArguments(annotation.arguments)
+        val raw = args.named["value"] ?: args.named["name"] ?: args.positional.firstOrNull() ?: return null
+        return stringLiteral.find(raw)?.groupValues?.get(1) ?: raw
+    }
 
-    private fun parameterAnnotations(parameter: String): Set<String> =
-        Regex("@(\\w+)").findAll(parameter).map { "@" + it.groupValues[1] }.toSet()
+    private fun topLevelParameters(raw: String): List<String> =
+        SpringSourceIndex.splitTopLevel(raw, ',').map { it.trim() }.filter { it.isNotEmpty() }
 
-    private fun parameterName(parameter: String, declaration: String): String {
-        annotationString(parameter, "value")?.let { return it }
-        annotationString(parameter, "name")?.let { return it }
+    private fun parameterName(annotations: List<SpringAnnotation>, declaration: String): String {
+        listOf("RequestParam", "PathVariable", "RequestHeader", "CookieValue", "RequestPart").forEach { name ->
+            annotationValue(annotations, name)?.takeIf { it.isNotBlank() }?.let { return it }
+        }
         val colon = declaration.indexOf(':')
         val head = if (colon >= 0) declaration.substring(0, colon) else declaration
         return Regex("([A-Za-z_][A-Za-z0-9_]*)\\s*$").find(head.trim())?.groupValues?.get(1).orEmpty()
@@ -242,17 +516,7 @@ object SpringControllerParser {
             ?: declaration.split(Regex("\\s+")).firstOrNull().orEmpty()
     }
 
-    private fun annotationString(text: String, attribute: String): String? {
-        val named = Regex("(?<![A-Za-z0-9_])$attribute\\s*=\\s*\"([^\"]*)\"").find(text)
-        if (named != null) return named.groupValues[1]
-        if (attribute != "value" && attribute != "name") return null
-        // A positional value only counts when the annotation arguments start with a string.
-        val arguments = Regex("@\\w+\\s*\\(([^)]*)\\)").find(text)?.groupValues?.get(1)?.trim() ?: return null
-        return if (arguments.startsWith("\"")) stringLiteral.find(arguments)?.groupValues?.get(1) else null
-    }
-
-    private fun firstString(attributes: String): String? =
-        stringLiteral.find(attributes)?.groupValues?.get(1)
+    private fun typeSimpleName(type: String): String = SpringSourceIndex.simpleName(type)
 
     private fun joinPath(base: String, path: String): String {
         val parts = listOf(base, path)
@@ -262,257 +526,11 @@ object SpringControllerParser {
     }
 
     private fun sampleForType(type: String): String {
-        val normalized = type
-            .removePrefix("?")
-            .replace(Regex("<.*>"), "")
-            .substringAfterLast('.')
-            .trim()
-        return when (normalized) {
-            "String", "CharSequence", "Char", "char" -> "string"
-            "Int", "Integer", "Long", "Short", "Byte", "BigInteger",
-            "int", "long", "short", "byte" -> "0"
-            "Double", "Float", "BigDecimal", "double", "float" -> "0.0"
-            "Boolean", "boolean" -> "true"
-            "LocalDate" -> "2024-01-01"
-            "LocalDateTime", "Instant", "OffsetDateTime", "ZonedDateTime" -> "2024-01-01T00:00:00Z"
-            "UUID" -> "00000000-0000-4000-8000-000000000000"
-            else -> "string"
-        }
+        val normalized = typeSimpleName(type)
+        SpringSourceIndex.scalarText(normalized)?.let { return it }
+        return "string"
     }
 
-    private val collectionTypes = setOf(
-        "List", "Set", "Collection", "Iterable", "ArrayList", "LinkedList", "HashSet", "Queue", "Deque",
-    )
-    private val mapTypes = setOf("Map", "HashMap", "LinkedHashMap", "TreeMap", "ConcurrentHashMap")
-    private val wrapperTypes = setOf("Optional", "ResponseEntity", "HttpEntity")
-
-    /** Sample for a `@RequestBody` parameter. Scalars stay scalars instead of becoming `{}`. */
-    private fun bodySample(type: String, source: String): String {
-        val normalized = type.trim().removePrefix("?")
-        scalarSample(eraseTypeArguments(normalized).substringAfterLast('.').trim().trimEnd('?', '!'))?.let { return it }
-        if (normalized.endsWith("[]")) {
-            val element = normalized.removeSuffix("[]")
-            return "[\n    " + bodySample(element, source) + "\n  ]"
-        }
-        return dtoSample(normalized, source, depth = 0)
-    }
-
-    private fun scalarSample(raw: String): String? = when (raw) {
-        "String", "CharSequence" -> "\"string\""
-        "Char", "char" -> "\"a\""
-        "Int", "Integer", "Long", "Short", "Byte", "BigInteger",
-        "int", "long", "short", "byte" -> "0"
-        "Double", "Float", "BigDecimal", "double", "float" -> "0.0"
-        "Boolean", "boolean" -> "true"
-        "LocalDate" -> "\"2024-01-01\""
-        "LocalDateTime", "Instant", "OffsetDateTime", "ZonedDateTime" -> "\"2024-01-01T00:00:00Z\""
-        "UUID" -> "\"00000000-0000-4000-8000-000000000000\""
-        "Object" -> "{}"
-        else -> null
-    }
-
-    private fun eraseTypeArguments(type: String): String {
-        val open = type.indexOf('<')
-        return if (open < 0) type else type.substring(0, open).trim()
-    }
-
-    private fun typeArguments(type: String): List<String> {
-        val open = type.indexOf('<')
-        if (open < 0) return emptyList()
-        var depth = 0
-        var end = -1
-        for (index in open until type.length) {
-            when (type[index]) {
-                '<' -> depth++
-                '>' -> {
-                    depth--
-                    if (depth == 0) {
-                        end = index
-                        break
-                    }
-                }
-            }
-        }
-        if (end < 0) return emptyList()
-        return splitTopLevel(type.substring(open + 1, end), ',').map { it.trim() }.filter { it.isNotEmpty() }
-    }
-
-    /**
-     * Builds a JSON body for a DTO declared in the same file. Generic arguments are substituted into
-     * the declared type parameters, so `Result<User>` renders the shape of `User` instead of `{}`.
-     */
-    private fun dtoSample(
-        type: String,
-        source: String,
-        depth: Int,
-        bindings: Map<String, String> = emptyMap(),
-    ): String {
-        if (depth > 6) return "{}"
-        val normalized = type.trim().removePrefix("?")
-        if (normalized.isBlank()) return "{}"
-        if (normalized.endsWith("[]")) {
-            return "[\n    " + dtoSample(normalized.removeSuffix("[]"), source, depth + 1, bindings) + "\n  ]"
-        }
-        val raw = eraseTypeArguments(normalized).substringAfterLast('.').trim().trimEnd('?', '!')
-        if (raw.isBlank()) return "{}"
-        val args = typeArguments(normalized)
-
-        // A type variable such as `T` referenced by a field.
-        if (args.isEmpty()) bindings[raw]?.let { return dtoSample(it, source, depth + 1, bindings) }
-
-        scalarSample(raw)?.let { return it }
-
-        if (raw in collectionTypes) {
-            val element = args.firstOrNull() ?: return "[]"
-            return "[\n    " + dtoSample(element, source, depth + 1, bindings) + "\n  ]"
-        }
-        if (raw in mapTypes) {
-            val value = args.getOrNull(1) ?: return "{}"
-            return "{\n    \"key\": " + dtoSample(value, source, depth + 1, bindings) + "\n  }"
-        }
-
-        val classMatch = Regex("\\bclass\\s+$raw\\b").find(source)
-        if (classMatch == null) {
-            // Unknown wrapper (e.g. Page<User> declared elsewhere): render the payload rather than {}.
-            val inner = args.firstOrNull() ?: return "{}"
-            return dtoSample(inner, source, depth + 1, bindings)
-        }
-
-        val header = classHeader(source, raw, classMatch.range.last + 1)
-            ?: return args.firstOrNull()?.let { dtoSample(it, source, depth + 1, bindings) } ?: "{}"
-        val classBindings = if (header.typeParameters.isEmpty()) {
-            bindings
-        } else {
-            bindings + header.typeParameters.zip(args).filter { it.second.isNotBlank() }.toMap()
-        }
-        val fields = classFields(source, header)
-        if (fields.isEmpty()) return "{}"
-        return buildString {
-            append("{\n")
-            fields.forEachIndexed { index, (name, fieldType) ->
-                append("  \"").append(name).append("\": ")
-                append(dtoSample(fieldType, source, depth + 1, classBindings))
-                if (index < fields.lastIndex) append(',')
-                append('\n')
-            }
-            append('}')
-        }
-    }
-
-    private data class ClassHeader(
-        val typeParameters: List<String>,
-        val bodyStart: Int,
-        val bodyEnd: Int,
-        val constructorParams: String?,
-    )
-
-    private fun classHeader(source: String, name: String, from: Int): ClassHeader? {
-        var cursor = from
-        while (cursor < source.length && source[cursor].isWhitespace()) cursor++
-        val typeParameters = mutableListOf<String>()
-        if (source.getOrNull(cursor) == '<') {
-            val close = matchingAngle(source, cursor) ?: return null
-            typeParameters += splitTopLevel(source.substring(cursor + 1, close), ',')
-                .map { it.trim().substringBefore(' ').substringBefore(':') }
-                .filter { it.isNotEmpty() }
-            cursor = close + 1
-        }
-        while (cursor < source.length && source[cursor].isWhitespace()) cursor++
-        var constructorParams: String? = null
-        if (source.getOrNull(cursor) == '(') {
-            val close = matchingParen(source, cursor) ?: return null
-            constructorParams = source.substring(cursor + 1, close)
-            cursor = close + 1
-        }
-        // Skip Kotlin inheritance (`: Base()`) and Java `implements`.
-        val brace = source.indexOf('{', cursor)
-        val nextClass = Regex("\\b(?:class|interface|enum|record)\\s+\\w+").find(source, cursor)?.range?.first
-        if (brace < 0 || (nextClass != null && brace > nextClass)) {
-            return ClassHeader(typeParameters, -1, -1, constructorParams)
-        }
-        val bodyEnd = matchingBrace(source, brace) ?: source.length
-        return ClassHeader(typeParameters, brace + 1, bodyEnd, constructorParams)
-    }
-
-    private fun classFields(source: String, header: ClassHeader): List<Pair<String, String>> {
-        val fields = mutableListOf<Pair<String, String>>()
-        header.constructorParams?.let { params ->
-            splitTopLevel(params, ',').forEach { param ->
-                Regex("\\b(?:val|var)\\s+(\\w+)\\s*:\\s*([^=]+)").find(param)?.let { match ->
-                    fields += match.groupValues[1] to match.groupValues[2].trim()
-                }
-            }
-        }
-        if (header.bodyStart < 0) return fields
-        val body = source.substring(header.bodyStart, header.bodyEnd)
-        // Kotlin: val name: String — the type may contain commas inside generics.
-        Regex("\\b(?:val|var)\\s+(\\w+)\\s*:\\s*([^=\\n;]+)").findAll(body).forEach {
-            val type = it.groupValues[2].trim().trimEnd(',')
-            if (type.isNotEmpty()) fields += it.groupValues[1] to type
-        }
-        // Java: private final List<Map<String, User>> items;
-        Regex("\\bprivate\\s+(?:final\\s+)?([\\w.$]+(?:\\s*<[^;{}]*>)?(?:\\[\\])?)\\s+(\\w+)\\s*[;=]")
-            .findAll(body).forEach {
-                fields += it.groupValues[2] to it.groupValues[1].trim()
-            }
-        return fields.distinctBy { it.first }
-    }
-
-    private fun splitTopLevel(text: String, separator: Char): List<String> {
-        val parts = mutableListOf<String>()
-        val buffer = StringBuilder()
-        var round = 0
-        var angle = 0
-        var square = 0
-        var quoted = false
-        text.forEach { char ->
-            when {
-                char == '"' -> {
-                    quoted = !quoted
-                    buffer.append(char)
-                }
-                quoted -> buffer.append(char)
-                char == '(' -> { round++; buffer.append(char) }
-                char == ')' -> { round--; buffer.append(char) }
-                char == '<' -> { angle++; buffer.append(char) }
-                char == '>' -> { angle--; buffer.append(char) }
-                char == '[' -> { square++; buffer.append(char) }
-                char == ']' -> { square--; buffer.append(char) }
-                char == separator && round == 0 && angle == 0 && square == 0 -> {
-                    parts += buffer.toString()
-                    buffer.setLength(0)
-                }
-                else -> buffer.append(char)
-            }
-        }
-        parts += buffer.toString()
-        return parts
-    }
-
-    private fun matchingParen(source: String, open: Int): Int? = matching(source, open, '(', ')')
-
-    private fun matchingBrace(source: String, open: Int): Int? = matching(source, open, '{', '}')
-
-    private fun matchingAngle(source: String, open: Int): Int? = matching(source, open, '<', '>')
-
-    private fun matching(source: String, open: Int, start: Char, end: Char): Int? {
-        var depth = 0
-        var quoted = false
-        var index = open
-        while (index < source.length) {
-            val char = source[index]
-            if (char == '"' && source.getOrNull(index - 1) != '\\') quoted = !quoted
-            if (!quoted) {
-                when (char) {
-                    start -> depth++
-                    end -> {
-                        depth--
-                        if (depth == 0) return index
-                    }
-                }
-            }
-            index++
-        }
-        return null
-    }
+    private val collectionTypes = SpringSourceIndex.collectionTypes
+    private val mapTypes = SpringSourceIndex.mapTypes
 }

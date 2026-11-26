@@ -4,7 +4,9 @@ import com.astra.intellij.core.HttpFileParser
 import com.astra.intellij.core.OpenApiService
 import com.astra.intellij.core.SpringConfigParser
 import com.astra.intellij.core.SpringControllerParser
+import com.astra.intellij.core.SpringSource
 import com.astra.intellij.model.AstraEnvironment
+import com.astra.intellij.model.AstraRequest
 import com.astra.intellij.model.RequestCollection
 import com.astra.intellij.model.RequestFolder
 import com.astra.intellij.model.allRequests
@@ -17,6 +19,9 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ToolWindowManager
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.CodingErrorAction
 import java.util.Locale
 import java.util.UUID
 
@@ -102,19 +107,105 @@ object AstraIntegration {
         text: String,
         fileName: String,
     ): String {
-        val spec = SpringControllerParser.parse(text, fileName)
-            ?: throw IllegalArgumentException("No Spring controller mappings found in this file")
-        val collection = SpringControllerParser.toCollection(spec)
-        addCollection(workspace, collection)
-        val environment = springEnvironment(project)
-            ?: AstraEnvironment(
-                name = "Spring",
-                variables = linkedMapOf("baseUrl" to "http://localhost:8080"),
-            )
+        val sources = collectProjectSources(project, fileName)
+        val specs = SpringControllerParser.parseAll(text, fileName, sources)
+        if (specs.isEmpty()) throw IllegalArgumentException("No Spring controller mappings found in this file")
+
+        var created = 0
+        var updated = 0
+        var requestCount = 0
+        val pathVariables = LinkedHashMap<String, String>()
+        val baseUrl = springEnvironment(project)?.variables?.get("baseUrl") ?: "http://localhost:8080"
+
+        specs.forEach { spec ->
+            val collection = SpringControllerParser.toCollection(spec)
+            requestCount += collection.requests.size
+            val result = upsertCollection(workspace, collection)
+            if (result.second) updated++ else created++
+            spec.endpoints.forEach { endpoint ->
+                endpoint.pathVariables.forEach { (name, sample) -> pathVariables.putIfAbsent(name, sample) }
+            }
+        }
+
+        val environment = springEnvironment(project) ?: AstraEnvironment(
+            name = "Spring",
+            variables = linkedMapOf("baseUrl" to baseUrl),
+        )
+        environment.variables.putIfAbsent("baseUrl", baseUrl)
+        pathVariables.forEach { (name, value) -> environment.variables.putIfAbsent(name, value) }
         val stored = mergeEnvironment(workspace, environment)
-        workspace.data.activeEnvironmentId = stored.id
+        if (workspace.data.activeEnvironmentId.isNullOrBlank()) {
+            workspace.data.activeEnvironmentId = stored.id
+        }
         workspace.notifyChanged(null)
-        return "Generated ${collection.requests.size} request(s) from ${spec.className}"
+
+        val controllerText = if (specs.size == 1) "1 controller" else "${specs.size} controllers"
+        val changeText = buildString {
+            if (created > 0) append("created $created")
+            if (created > 0 && updated > 0) append(", ")
+            if (updated > 0) append("updated $updated")
+        }
+        return "Generated $requestCount request(s) from $controllerText ($changeText)"
+    }
+
+    /** Adds a new collection or merges generated requests into an existing collection with the same name. */
+    fun upsertCollection(workspace: WorkspaceService, collection: RequestCollection): Pair<RequestCollection, Boolean> {
+        val existing = workspace.data.collections.firstOrNull { it.name == collection.name }
+        if (existing == null) {
+            addCollection(workspace, collection)
+            return collection to false
+        }
+        collection.requests.forEach { incoming ->
+            val target = existing.requests.firstOrNull { it.name == incoming.name }
+            if (target == null) {
+                regenerateRequestIds(incoming)
+                existing.requests += incoming
+            } else {
+                copyRequest(target, incoming)
+            }
+        }
+        return existing to true
+    }
+
+    private fun copyRequest(target: AstraRequest, source: AstraRequest) {
+        target.method = source.method
+        target.url = source.url
+        target.headers = source.headers
+        target.params = source.params
+        target.bodyMode = source.bodyMode
+        target.body = source.body
+        target.formFields = source.formFields
+    }
+
+    private fun regenerateRequestIds(request: AstraRequest) {
+        request.id = UUID.randomUUID().toString()
+    }
+
+    /** Reads project sources so DTOs declared outside the controller file can be rendered. */
+    fun collectProjectSources(project: Project, currentFileName: String): List<SpringSource> {
+        val base = project.basePath ?: return emptyList()
+        val result = mutableListOf<SpringSource>()
+        var totalBytes = 0L
+        var visited = 0
+        val skipped = setOf("build", "target", ".git", ".idea", "node_modules", "out", "dist", ".gradle")
+        runCatching {
+            File(base).walkTopDown()
+                .onEnter { directory -> directory.name !in skipped }
+                .filter { file ->
+                    file.isFile && (file.name.endsWith(".java") || file.name.endsWith(".kt")) &&
+                        file.name != currentFileName
+                }
+                .take(4000)
+                .forEach { file ->
+                    val length = file.length()
+                    if (length == 0L || length > 2 * 1024 * 1024 || totalBytes > 20 * 1024 * 1024) return@forEach
+                    totalBytes += length
+                    visited++
+                    result += SpringSource(file.name, decodeText(file.readBytes()))
+                }
+        }
+        if (visited == 0) return emptyList()
+        return result
     }
 
     /** Locates `application.yml` / `application.properties` in the usual project locations. */
@@ -135,11 +226,31 @@ object AstraIntegration {
             .firstOrNull { it.isFile }
     }
 
+    /** Base config plus `application-{profile}` files selected by `spring.profiles.active`. */
+    fun springConfigFiles(project: Project): List<File> {
+        val base = findSpringConfig(project) ?: return emptyList()
+        val properties = runCatching { SpringConfigParser.parse(base.readText(), base.name) }.getOrDefault(emptyMap())
+        val active = properties["spring.profiles.active"]
+            ?: System.getenv("SPRING_PROFILES_ACTIVE").orEmpty()
+        val profiles = active.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        val directory = base.parentFile ?: return listOf(base)
+        val overlay = profiles.mapNotNull { profile ->
+            listOf("application-$profile.yml", "application-$profile.yaml", "application-$profile.properties")
+                .map { File(directory, it) }
+                .firstOrNull { it.isFile }
+        }
+        return listOf(base) + overlay
+    }
+
     fun springEnvironment(project: Project): AstraEnvironment? {
-        val file = findSpringConfig(project) ?: return null
+        val files = springConfigFiles(project)
+        if (files.isEmpty()) return null
         return runCatching {
-            val properties = SpringConfigParser.parse(file.readText(), file.name)
-            SpringConfigParser.environment(properties, "Spring ${file.name}")
+            val merged = LinkedHashMap<String, String>()
+            files.forEach { file ->
+                merged.putAll(SpringConfigParser.parse(file.readText(), file.name))
+            }
+            SpringConfigParser.environment(merged, "Spring ${files.first().name}")
         }.getOrNull()
     }
 
@@ -156,7 +267,8 @@ object AstraIntegration {
     fun mergeEnvironment(workspace: WorkspaceService, environment: AstraEnvironment): AstraEnvironment {
         val existing = workspace.data.environments.firstOrNull { it.name == environment.name }
         if (existing != null) {
-            environment.variables.forEach { (key, value) -> existing.variables[key] = value }
+            // Never overwrite values the user edited by hand.
+            environment.variables.forEach { (key, value) -> existing.variables.putIfAbsent(key, value) }
             return existing
         }
         environment.id = UUID.randomUUID().toString()
@@ -170,7 +282,29 @@ object AstraIntegration {
         toolWindow.activate(null)
     }
 
-    fun readVirtualFile(file: VirtualFile): String = String(file.contentsToByteArray(), Charsets.UTF_8)
+    fun readVirtualFile(file: VirtualFile): String = decodeText(file.contentsToByteArray())
+
+    /** Decodes UTF-8 with BOM or strict validation, falling back to GB18030 for legacy sources. */
+    fun decodeText(bytes: ByteArray): String {
+        if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+            return String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+        }
+        if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) {
+            return String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+        }
+        if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
+            return String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+        }
+        return try {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes))
+                .toString()
+        } catch (_: CharacterCodingException) {
+            String(bytes, charset("GB18030"))
+        }
+    }
 
     fun readEditorText(event: AnActionEvent): String? =
         event.getData(CommonDataKeys.EDITOR)?.document?.text
@@ -249,7 +383,7 @@ class GenerateSpringRequestsAction : AnAction(
                 project,
                 workspace,
                 text,
-                file?.nameWithoutExtension ?: "Controller",
+                file?.name ?: "Controller",
             )
             AstraIntegration.openAstra(project)
             AstraIntegration.showInfo(project, message)
@@ -260,10 +394,11 @@ class GenerateSpringRequestsAction : AnAction(
 
     override fun update(event: AnActionEvent) {
         val file = event.getData(CommonDataKeys.VIRTUAL_FILE)
-        val visible = file != null && AstraIntegration.isJavaOrKotlin(file.name) && runCatching {
-            val text = AstraIntegration.readEditorText(event) ?: AstraIntegration.readVirtualFile(file)
+        val text = AstraIntegration.readEditorText(event)
+            ?: file?.let { runCatching { AstraIntegration.readVirtualFile(it) }.getOrNull() }
+        val visible = text != null &&
+            (file == null || AstraIntegration.isJavaOrKotlin(file.name)) &&
             AstraIntegration.looksLikeSpringController(text)
-        }.getOrDefault(false)
         event.presentation.isEnabledAndVisible = visible
     }
 }

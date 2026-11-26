@@ -27,6 +27,16 @@ A local-first API client for JetBrains IDEs. Design, send, and automate HTTP req
 - **Large responses** — previews are capped at 1.5M characters with an explicit truncation notice, while **Save…** exports the complete response body.
 - **Charset detection** — responses are decoded from the declared charset, BOM or byte content (UTF-8 / UTF-16 / GB18030 and other JVM charsets), so non-UTF-8 endpoints display correctly.
 
+## What's new in 0.4.0
+
+- **Spring generation overhaul** — 39 parsing gaps fixed: fully qualified and composed annotations, constants and multi-path mappings, inherited class paths, controller interfaces, cross-file DTOs, Java records, inheritance, non-private fields, `@JsonProperty` names, enum samples and cycle protection.
+- `consumes` aware bodies: JSON, XML, plain text, `x-www-form-urlencoded` and `multipart/form-data` (including `@RequestPart` / `MultipartFile`).
+- `@ModelAttribute`, unannotated DTO query parameters and merged `@CookieValue` headers.
+- Path variables are emitted as `{{id}}` with sample values added to the Spring environment.
+- Multiple controllers in one file generate separate collections; repeated generation updates requests in place.
+- Spring profiles (`application-{profile}.yml`), `server.ssl.enabled` and non-UTF-8 source files are supported.
+- Comments, raw strings, text blocks and nested classes no longer produce phantom endpoints.
+
 ## What's new in 0.3.17
 
 - **Generic DTO bodies** — Spring controller generation substitutes type arguments into DTO fields, so `Result<User>`, `List<User>` and `Map<String, User>` produce real JSON instead of `{}`.
@@ -97,6 +107,16 @@ Search for **Astra** in `Settings → Plugins → Marketplace`, or install from 
 4. Inspect the response, or run the whole collection with the collection runner.
 
 Working from Java or Kotlin source, right-click a Spring controller and choose **Generate Astra Requests**; Astra creates the collection and loads the application's `application.yml` variables at the same time.
+
+Generation details:
+
+- Java and Kotlin controllers, including interfaces and implementations; composed annotations such as `@CreateUser` are recognised.
+- Fully qualified annotations, path constants, multi-path mappings and class-level `@RequestMapping` inherited from a parent type.
+- DTOs declared in other project files, Java records, Kotlin data classes, inheritance, `@JsonProperty` / `@SerialName` names and enum fields.
+- `@RequestBody` (JSON, XML or plain text depending on `consumes`), `@RequestPart` / `MultipartFile` (form-data), `application/x-www-form-urlencoded`, `@ModelAttribute` and unannotated parameters.
+- Path variables stay as `{{id}}` placeholders and are added to the Spring environment with sample values.
+- Re-running generation updates the existing collection instead of duplicating it, and never overwrites variables you edited by hand.
+- `application-dev.yml`-style profile files and `server.ssl.enabled: true` are respected.
 
 ## Keyboard shortcuts
 

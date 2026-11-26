@@ -33,6 +33,25 @@ class SpringConfigParserTest {
     }
 
     @Test
+    fun `uses https when ssl is enabled`() {
+        val properties = mapOf(
+            "server.port" to "8443",
+            "server.ssl.enabled" to "true",
+            "server.servlet.context-path" to "/secure",
+        )
+        assertEquals("https://localhost:8443/secure", SpringConfigParser.baseUrl(properties))
+    }
+
+    @Test
+    fun `decodes utf8 and gb18030 sources`() {
+        val utf8 = "class 控制器 {}".toByteArray(Charsets.UTF_8)
+        assertEquals("class 控制器 {}", com.astra.intellij.ui.AstraIntegration.decodeText(utf8))
+
+        val gb = "class 控制器 {}".toByteArray(charset("GB18030"))
+        assertEquals("class 控制器 {}", com.astra.intellij.ui.AstraIntegration.decodeText(gb))
+    }
+
+    @Test
     fun `parses properties files and keeps comments out`() {
         val properties = SpringConfigParser.parse(
             """

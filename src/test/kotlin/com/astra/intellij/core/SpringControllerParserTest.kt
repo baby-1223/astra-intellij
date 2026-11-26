@@ -50,7 +50,7 @@ class SpringControllerParserTest {
         val get = spec.endpoints[0]
         assertEquals("getUser", get.name)
         assertEquals("GET", get.method)
-        assertEquals("/api/users/0", get.path)
+        assertEquals("/api/users/{{id}}", get.path)
         assertTrue(get.query.contains("expand" to "string"))
         assertTrue(get.headers.contains("X-Tenant" to ""))
 
@@ -87,7 +87,7 @@ class SpringControllerParserTest {
         assertEquals(2, spec.endpoints.size)
         assertEquals("/v1/orders", spec.endpoints[0].path)
         assertEquals(listOf("size" to "10"), spec.endpoints[0].query)
-        assertEquals("/v1/orders/string", spec.endpoints[1].path)
+        assertEquals("/v1/orders/{{id}}", spec.endpoints[1].path)
     }
 
     @Test
@@ -143,7 +143,7 @@ class SpringControllerParserTest {
         assertTrue(map.contains("\"key\""), map)
         assertTrue(map.contains("\"name\": \"string\""), map)
 
-        assertEquals("\"string\"", bodies.getValue("text"))
+        assertEquals("string", bodies.getValue("text"))
     }
 
     @Test

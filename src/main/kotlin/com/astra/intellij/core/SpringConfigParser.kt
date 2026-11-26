@@ -47,7 +47,8 @@ object SpringConfigParser {
         val port = properties["server.port"]?.trim()?.takeIf { it.isNotEmpty() } ?: "8080"
         val context = properties["server.servlet.context-path"]?.trim().orEmpty().trimEnd('/')
         val prefix = if (context.isEmpty()) "" else if (context.startsWith("/")) context else "/$context"
-        return "http://localhost:$port$prefix"
+        val scheme = if (properties["server.ssl.enabled"]?.trim().equals("true", ignoreCase = true)) "https" else "http"
+        return "$scheme://localhost:$port$prefix"
     }
 
     fun environment(properties: Map<String, String>, name: String): AstraEnvironment =
