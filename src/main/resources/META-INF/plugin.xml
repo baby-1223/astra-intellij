@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.astra.apiclient</id>
     <name>Astra</name>
-    <version>0.3.16</version>
+    <version>0.3.17</version>
     <vendor url="https://github.com/baby-1223/astra-intellij">APost</vendor>
 
     <icon>/icons/astra-plugin.svg</icon>
@@ -54,6 +54,12 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.3.17</h3>
+        <ul>
+            <li>Spring controller generation now renders generic request bodies: <code>Result&lt;User&gt;</code>, <code>List&lt;User&gt;</code> and <code>Map&lt;String, User&gt;</code> produce real field samples instead of <code>{}</code>.</li>
+            <li>Kotlin data classes with primary-constructor properties and nullable types are supported.</li>
+            <li>Java parameter types containing generic commas no longer get truncated.</li>
+        </ul>
         <h3>0.3.16</h3>
         <ul>
             <li>Fix <code>SpillingKt</code> compatibility error on IntelliJ IDEA 2024.3+ — replaced Kotlin coroutine sequence with a plain list in <code>SecretCodec</code>.</li>

@@ -91,6 +91,91 @@ class SpringControllerParserTest {
     }
 
     @Test
+    fun `renders generic request bodies instead of empty objects`() {
+        val source = """
+            package demo;
+
+            @RestController
+            @RequestMapping("/api")
+            public class GenericController {
+                @PostMapping("/wrapper")
+                public void wrapper(@RequestBody Result<UserDto> body) {
+                }
+
+                @PostMapping("/list")
+                public void list(@RequestBody List<UserDto> body) {
+                }
+
+                @PostMapping("/map")
+                public void map(@RequestBody Map<String, UserDto> body) {
+                }
+
+                @PostMapping("/text")
+                public void text(@RequestBody String body) {
+                }
+            }
+
+            class Result<T> {
+                private T data;
+                private String message;
+            }
+
+            class UserDto {
+                private String name;
+                private List<Map<String, Integer>> scores;
+            }
+        """.trimIndent()
+
+        val spec = SpringControllerParser.parse(source, "GenericController")
+        assertNotNull(spec)
+        val bodies = spec!!.endpoints.associate { it.name to it.body.orEmpty() }
+
+        val wrapper = bodies.getValue("wrapper")
+        assertTrue(wrapper.contains("\"data\""), wrapper)
+        assertTrue(wrapper.contains("\"name\": \"string\""), wrapper)
+        assertTrue(wrapper.contains("\"scores\""), wrapper)
+
+        val list = bodies.getValue("list")
+        assertTrue(list.trimStart().startsWith("["), list)
+        assertTrue(list.contains("\"name\": \"string\""), list)
+
+        val map = bodies.getValue("map")
+        assertTrue(map.contains("\"key\""), map)
+        assertTrue(map.contains("\"name\": \"string\""), map)
+
+        assertEquals("\"string\"", bodies.getValue("text"))
+    }
+
+    @Test
+    fun `reads kotlin constructor generics and type variables`() {
+        val source = """
+            @RestController
+            @RequestMapping("/kt")
+            class KotlinController {
+                @PostMapping("/page")
+                fun page(@RequestBody body: PageResult<User>): Unit = Unit
+            }
+
+            data class PageResult<T>(
+                val total: Int,
+                val items: List<T>,
+                val cursor: String?
+            )
+
+            data class User(val id: Long, val nickname: String)
+        """.trimIndent()
+
+        val spec = SpringControllerParser.parse(source, "KotlinController")
+        assertNotNull(spec)
+        val body = spec!!.endpoints.single().body.orEmpty()
+
+        assertTrue(body.contains("\"total\": 0"), body)
+        assertTrue(body.contains("\"cursor\": \"string\""), body)
+        assertTrue(body.contains("\"nickname\": \"string\""), body)
+        assertTrue(body.contains("\"id\": 0"), body)
+    }
+
+    @Test
     fun `builds a collection that uses the environment base url`() {
         val spec = SpringControllerParser.parse(javaController, "UserController")!!
         val collection = SpringControllerParser.toCollection(spec)

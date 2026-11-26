@@ -27,6 +27,11 @@ A local-first API client for JetBrains IDEs. Design, send, and automate HTTP req
 - **Large responses** — previews are capped at 1.5M characters with an explicit truncation notice, while **Save…** exports the complete response body.
 - **Charset detection** — responses are decoded from the declared charset, BOM or byte content (UTF-8 / UTF-16 / GB18030 and other JVM charsets), so non-UTF-8 endpoints display correctly.
 
+## What's new in 0.3.17
+
+- **Generic DTO bodies** — Spring controller generation substitutes type arguments into DTO fields, so `Result<User>`, `List<User>` and `Map<String, User>` produce real JSON instead of `{}`.
+- Kotlin primary-constructor data classes and nullable types are supported; Java generic parameter types keep their commas.
+
 ## What's new in 0.3.16
 
 - **Fix compatibility** — `SpillingKt` class-not-found on IntelliJ IDEA 2024.3+. Replaced Kotlin coroutine sequence in `SecretCodec` with a plain list.

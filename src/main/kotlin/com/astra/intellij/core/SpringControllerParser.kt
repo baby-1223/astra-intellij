@@ -73,7 +73,7 @@ object SpringControllerParser {
                 val type = parameterType(declaration)
                 when {
                     "@RequestBody" in modifiers -> {
-                        body = dtoSample(type, source, depth = 0)
+                        body = bodySample(type, source)
                     }
                     "@RequestPart" in modifiers || type.contains("MultipartFile") -> Unit
                     "@PathVariable" in modifiers && name.isNotBlank() -> {
@@ -233,11 +233,13 @@ object SpringControllerParser {
 
     private fun parameterType(declaration: String): String {
         val colon = declaration.indexOf(':')
-        return if (colon >= 0) {
-            declaration.substring(colon + 1).trim()
-        } else {
-            declaration.split(Regex("\\s+")).firstOrNull().orEmpty()
+        if (colon >= 0) {
+            return declaration.substring(colon + 1).trim().removeSuffix("...")
         }
+        // Java: everything before the trailing parameter name, so generics keep their commas and spaces.
+        return Regex("^(.+?)\\s+[A-Za-z_][A-Za-z0-9_]*\\s*$").find(declaration.trim())
+            ?.groupValues?.get(1)?.trim()?.removeSuffix("...")
+            ?: declaration.split(Regex("\\s+")).firstOrNull().orEmpty()
     }
 
     private fun annotationString(text: String, attribute: String): String? {
@@ -278,53 +280,182 @@ object SpringControllerParser {
         }
     }
 
-    /** Builds a JSON body for a DTO declared in the same file, or `{}` when it cannot be resolved. */
-    private fun dtoSample(type: String, source: String, depth: Int): String {
-        val simple = type
-            .removePrefix("?")
-            .replace(Regex("<.*>"), "")
-            .substringAfterLast('.')
-            .trim()
-        if (simple.isBlank()) return "{}"
-        if (depth > 2) return "{}"
-        val classMatch = Regex("\\bclass\\s+$simple\\b").find(source) ?: return "{}"
-        val bodyStart = source.indexOf('{', classMatch.range.last + 1)
-        if (bodyStart < 0) return "{}"
-        val bodyEnd = matchingBrace(source, bodyStart) ?: return "{}"
-        val body = source.substring(bodyStart + 1, bodyEnd)
-        val fields = mutableListOf<Pair<String, String>>()
-        // Kotlin: val name: String / Java: private String name;
-        Regex("\\b(?:val|var)\\s+(\\w+)\\s*:\\s*([A-Za-z_][\\w.<>?\\[\\]]*)").findAll(body).forEach {
-            fields += it.groupValues[1] to it.groupValues[2]
+    private val collectionTypes = setOf(
+        "List", "Set", "Collection", "Iterable", "ArrayList", "LinkedList", "HashSet", "Queue", "Deque",
+    )
+    private val mapTypes = setOf("Map", "HashMap", "LinkedHashMap", "TreeMap", "ConcurrentHashMap")
+    private val wrapperTypes = setOf("Optional", "ResponseEntity", "HttpEntity")
+
+    /** Sample for a `@RequestBody` parameter. Scalars stay scalars instead of becoming `{}`. */
+    private fun bodySample(type: String, source: String): String {
+        val normalized = type.trim().removePrefix("?")
+        scalarSample(eraseTypeArguments(normalized).substringAfterLast('.').trim().trimEnd('?', '!'))?.let { return it }
+        if (normalized.endsWith("[]")) {
+            val element = normalized.removeSuffix("[]")
+            return "[\n    " + bodySample(element, source) + "\n  ]"
         }
-        Regex("\\bprivate\\s+(?:final\\s+)?([A-Za-z_][\\w.<>?\\[\\]]*)\\s+(\\w+)\\s*;").findAll(body).forEach {
-            fields += it.groupValues[2] to it.groupValues[1]
+        return dtoSample(normalized, source, depth = 0)
+    }
+
+    private fun scalarSample(raw: String): String? = when (raw) {
+        "String", "CharSequence" -> "\"string\""
+        "Char", "char" -> "\"a\""
+        "Int", "Integer", "Long", "Short", "Byte", "BigInteger",
+        "int", "long", "short", "byte" -> "0"
+        "Double", "Float", "BigDecimal", "double", "float" -> "0.0"
+        "Boolean", "boolean" -> "true"
+        "LocalDate" -> "\"2024-01-01\""
+        "LocalDateTime", "Instant", "OffsetDateTime", "ZonedDateTime" -> "\"2024-01-01T00:00:00Z\""
+        "UUID" -> "\"00000000-0000-4000-8000-000000000000\""
+        "Object" -> "{}"
+        else -> null
+    }
+
+    private fun eraseTypeArguments(type: String): String {
+        val open = type.indexOf('<')
+        return if (open < 0) type else type.substring(0, open).trim()
+    }
+
+    private fun typeArguments(type: String): List<String> {
+        val open = type.indexOf('<')
+        if (open < 0) return emptyList()
+        var depth = 0
+        var end = -1
+        for (index in open until type.length) {
+            when (type[index]) {
+                '<' -> depth++
+                '>' -> {
+                    depth--
+                    if (depth == 0) {
+                        end = index
+                        break
+                    }
+                }
+            }
         }
+        if (end < 0) return emptyList()
+        return splitTopLevel(type.substring(open + 1, end), ',').map { it.trim() }.filter { it.isNotEmpty() }
+    }
+
+    /**
+     * Builds a JSON body for a DTO declared in the same file. Generic arguments are substituted into
+     * the declared type parameters, so `Result<User>` renders the shape of `User` instead of `{}`.
+     */
+    private fun dtoSample(
+        type: String,
+        source: String,
+        depth: Int,
+        bindings: Map<String, String> = emptyMap(),
+    ): String {
+        if (depth > 6) return "{}"
+        val normalized = type.trim().removePrefix("?")
+        if (normalized.isBlank()) return "{}"
+        if (normalized.endsWith("[]")) {
+            return "[\n    " + dtoSample(normalized.removeSuffix("[]"), source, depth + 1, bindings) + "\n  ]"
+        }
+        val raw = eraseTypeArguments(normalized).substringAfterLast('.').trim().trimEnd('?', '!')
+        if (raw.isBlank()) return "{}"
+        val args = typeArguments(normalized)
+
+        // A type variable such as `T` referenced by a field.
+        if (args.isEmpty()) bindings[raw]?.let { return dtoSample(it, source, depth + 1, bindings) }
+
+        scalarSample(raw)?.let { return it }
+
+        if (raw in collectionTypes) {
+            val element = args.firstOrNull() ?: return "[]"
+            return "[\n    " + dtoSample(element, source, depth + 1, bindings) + "\n  ]"
+        }
+        if (raw in mapTypes) {
+            val value = args.getOrNull(1) ?: return "{}"
+            return "{\n    \"key\": " + dtoSample(value, source, depth + 1, bindings) + "\n  }"
+        }
+
+        val classMatch = Regex("\\bclass\\s+$raw\\b").find(source)
+        if (classMatch == null) {
+            // Unknown wrapper (e.g. Page<User> declared elsewhere): render the payload rather than {}.
+            val inner = args.firstOrNull() ?: return "{}"
+            return dtoSample(inner, source, depth + 1, bindings)
+        }
+
+        val header = classHeader(source, raw, classMatch.range.last + 1)
+            ?: return args.firstOrNull()?.let { dtoSample(it, source, depth + 1, bindings) } ?: "{}"
+        val classBindings = if (header.typeParameters.isEmpty()) {
+            bindings
+        } else {
+            bindings + header.typeParameters.zip(args).filter { it.second.isNotBlank() }.toMap()
+        }
+        val fields = classFields(source, header)
         if (fields.isEmpty()) return "{}"
         return buildString {
             append("{\n")
             fields.forEachIndexed { index, (name, fieldType) ->
                 append("  \"").append(name).append("\": ")
-                val normalized = fieldType.replace(Regex("<.*>"), "").substringAfterLast('.')
-                append(
-                    when {
-                        normalized == "String" || normalized == "char" -> "\"string\""
-                        normalized in setOf(
-                            "Int", "Integer", "Long", "Short", "Byte",
-                            "int", "long", "short", "byte",
-                        ) -> "0"
-                        normalized in setOf("Double", "Float", "BigDecimal", "double", "float") -> "0.0"
-                        normalized == "Boolean" || normalized == "boolean" -> "true"
-                        fieldType.startsWith("List") || fieldType.startsWith("Set") ||
-                            fieldType.startsWith("Collection") || fieldType.endsWith("[]") -> "[]"
-                        else -> dtoSample(fieldType, source, depth + 1)
-                    },
-                )
+                append(dtoSample(fieldType, source, depth + 1, classBindings))
                 if (index < fields.lastIndex) append(',')
                 append('\n')
             }
             append('}')
         }
+    }
+
+    private data class ClassHeader(
+        val typeParameters: List<String>,
+        val bodyStart: Int,
+        val bodyEnd: Int,
+        val constructorParams: String?,
+    )
+
+    private fun classHeader(source: String, name: String, from: Int): ClassHeader? {
+        var cursor = from
+        while (cursor < source.length && source[cursor].isWhitespace()) cursor++
+        val typeParameters = mutableListOf<String>()
+        if (source.getOrNull(cursor) == '<') {
+            val close = matchingAngle(source, cursor) ?: return null
+            typeParameters += splitTopLevel(source.substring(cursor + 1, close), ',')
+                .map { it.trim().substringBefore(' ').substringBefore(':') }
+                .filter { it.isNotEmpty() }
+            cursor = close + 1
+        }
+        while (cursor < source.length && source[cursor].isWhitespace()) cursor++
+        var constructorParams: String? = null
+        if (source.getOrNull(cursor) == '(') {
+            val close = matchingParen(source, cursor) ?: return null
+            constructorParams = source.substring(cursor + 1, close)
+            cursor = close + 1
+        }
+        // Skip Kotlin inheritance (`: Base()`) and Java `implements`.
+        val brace = source.indexOf('{', cursor)
+        val nextClass = Regex("\\b(?:class|interface|enum|record)\\s+\\w+").find(source, cursor)?.range?.first
+        if (brace < 0 || (nextClass != null && brace > nextClass)) {
+            return ClassHeader(typeParameters, -1, -1, constructorParams)
+        }
+        val bodyEnd = matchingBrace(source, brace) ?: source.length
+        return ClassHeader(typeParameters, brace + 1, bodyEnd, constructorParams)
+    }
+
+    private fun classFields(source: String, header: ClassHeader): List<Pair<String, String>> {
+        val fields = mutableListOf<Pair<String, String>>()
+        header.constructorParams?.let { params ->
+            splitTopLevel(params, ',').forEach { param ->
+                Regex("\\b(?:val|var)\\s+(\\w+)\\s*:\\s*([^=]+)").find(param)?.let { match ->
+                    fields += match.groupValues[1] to match.groupValues[2].trim()
+                }
+            }
+        }
+        if (header.bodyStart < 0) return fields
+        val body = source.substring(header.bodyStart, header.bodyEnd)
+        // Kotlin: val name: String — the type may contain commas inside generics.
+        Regex("\\b(?:val|var)\\s+(\\w+)\\s*:\\s*([^=\\n;]+)").findAll(body).forEach {
+            val type = it.groupValues[2].trim().trimEnd(',')
+            if (type.isNotEmpty()) fields += it.groupValues[1] to type
+        }
+        // Java: private final List<Map<String, User>> items;
+        Regex("\\bprivate\\s+(?:final\\s+)?([\\w.$]+(?:\\s*<[^;{}]*>)?(?:\\[\\])?)\\s+(\\w+)\\s*[;=]")
+            .findAll(body).forEach {
+                fields += it.groupValues[2] to it.groupValues[1].trim()
+            }
+        return fields.distinctBy { it.first }
     }
 
     private fun splitTopLevel(text: String, separator: Char): List<String> {
