@@ -1,5 +1,6 @@
 package com.astra.intellij.model
 
+import com.astra.intellij.core.MockRoute
 import java.util.UUID
 
 data class KeyValue(
@@ -280,6 +281,8 @@ data class WorkspaceData(
     var globals: MutableMap<String, String> = mutableMapOf(),
     var settings: AstraSettings = AstraSettings(),
     var monitors: MutableList<MonitorConfig> = mutableListOf(),
+    /** User-edited mock routes; empty means routes are generated from a collection or OpenAPI. */
+    var mockRoutes: MutableList<MockRoute> = mutableListOf(),
 ) {
     companion object {
         /** Bump when the persisted shape changes so old payloads can be migrated on load. */

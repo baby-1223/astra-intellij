@@ -63,14 +63,21 @@ class PostResponseServiceTest {
     }
 
     @Test
-    fun `works without an active environment`() {
-        val updates = PostResponseService.execute(
-            listOf("set token json $.token"),
-            HttpResult(body = "{\"token\":\"abc\"}".toByteArray()),
-            mutableMapOf(),
-            null,
+    fun `pm style scripts run with pm jsonPath and report changed variables`() {
+        val environment = AstraEnvironment(name = "dev")
+        val result = HttpResult(
+            status = 200,
+            body = """{"data":{"token":"t-7"}}""".toByteArray(StandardCharsets.UTF_8),
         )
 
-        assertEquals(listOf(PostResponseService.Update("token", "abc")), updates)
+        val updates = PostResponseService.execute(
+            listOf("pm.environment.set('token', pm.jsonPath('${'$'}.data.token'));"),
+            result,
+            mutableMapOf(),
+            environment,
+        )
+
+        assertEquals("t-7", environment.variables["token"])
+        assertEquals(listOf(PostResponseService.Update("token", "t-7")), updates)
     }
 }

@@ -5,6 +5,8 @@ import com.astra.intellij.model.AstraRequest
 import com.astra.intellij.model.FormField
 import com.astra.intellij.model.HttpResult
 import com.astra.intellij.model.KeyValue
+import com.google.gson.JsonElement
+import com.google.gson.JsonParser
 import org.mozilla.javascript.BaseFunction
 import org.mozilla.javascript.Context
 import org.mozilla.javascript.Function
@@ -27,6 +29,7 @@ import java.util.Locale
  *   pm.collectionVariables / pm.globals (treated like pm.variables)
  *   pm.request.method/url/headers.add|upsert|remove, pm.request.body.raw
  *   pm.info.eventName / pm.info.requestName, pm.execution.setNextRequest (no-op)
+ *   pm.jsonPath(path, node?) reads the response body (post-response) or an explicit JSON value
  *   console.log/info/warn/error/debug, pm.test (runs the callback)
  */
 object ScriptService {
@@ -66,6 +69,7 @@ object ScriptService {
             putProperty(pm, "sendRequest", sendRequestFunction(cx, scope, vars, sender))
             putProperty(pm, "test", testFunction(cx, scope, logs))
             putProperty(pm, "execution", executionObject(cx, scope))
+            putProperty(pm, "jsonPath", jsonPathFunction(cx, scope, null))
             putProperty(scope, "pm", pm)
             putProperty(scope, "console", consoleObject(cx, scope, logs))
 
@@ -74,6 +78,54 @@ object ScriptService {
         } catch (error: RhinoException) {
             throw IllegalStateException(
                 "Pre-request script failed at line ${error.lineNumber()}: ${error.details()}",
+                error,
+            )
+        } finally {
+            Context.exit()
+        }
+        return vars
+    }
+
+    /**
+     * Runs a Postman-compatible post-response script with pm.response available.
+     * Values written through pm.environment / pm.variables are persisted to [environment].
+     */
+    fun runPostResponse(
+        script: String,
+        result: HttpResult,
+        baseVars: Map<String, String>,
+        environment: AstraEnvironment?,
+        request: AstraRequest? = null,
+        logs: MutableList<String>? = null,
+    ): MutableMap<String, String> {
+        if (script.isBlank()) return baseVars.toMutableMap()
+        val vars = baseVars.toMutableMap()
+        val cx = Context.enter()
+        try {
+            cx.optimizationLevel = -1
+            cx.languageVersion = Context.VERSION_ES6
+            val scope = cx.initSafeStandardObjects()
+            val pm = cx.newObject(scope) as ScriptableObject
+            putProperty(pm, "environment", environmentObject(cx, scope, vars, environment))
+            putProperty(pm, "variables", variablesObject(cx, scope, vars))
+            putProperty(pm, "collectionVariables", variablesObject(cx, scope, vars))
+            putProperty(pm, "globals", variablesObject(cx, scope, vars))
+            putProperty(pm, "request", requestObject(cx, scope, request))
+            putProperty(pm, "response", responseObject(cx, scope, result))
+            putProperty(pm, "info", infoObject(cx, scope, request))
+            // Without a log sink there is nowhere to report a failed assertion, so surface it
+            // as a script error instead of silently swallowing it.
+            putProperty(pm, "test", testFunction(cx, scope, logs, failFast = logs == null))
+            putProperty(pm, "execution", executionObject(cx, scope))
+            putProperty(pm, "jsonPath", jsonPathFunction(cx, scope, ResponseCharset.decode(result)))
+            putProperty(scope, "pm", pm)
+            putProperty(scope, "console", consoleObject(cx, scope, logs))
+
+            cx.evaluateString(scope, script, "post-response", 1, null)
+        } catch (error: RhinoException) {
+            throw IllegalStateException(
+                "Post-response script failed at line ${error.lineNumber()}: " +
+                    error.details().ifBlank { error.message.orEmpty() },
                 error,
             )
         } finally {
@@ -235,12 +287,16 @@ object ScriptService {
         cx: Context,
         scope: Scriptable,
         logs: MutableList<String>?,
+        failFast: Boolean = false,
     ): BaseFunction = NativeFn("test") { args ->
         val name = jsString(args.getOrNull(0)).ifBlank { "test" }
         val callback = args.getOrNull(1)
         if (callback is Function) {
-            runCatching { callback.call(cx, scope, scope, emptyArray()) }
-                .onFailure { logs?.add("$name: ${it.message}") }
+            val failure = runCatching { callback.call(cx, scope, scope, emptyArray()) }.exceptionOrNull()
+            if (failure != null) {
+                logs?.add("$name: ${failure.message}")
+                if (failFast) throw failure
+            }
         }
         Undefined.instance
     }
@@ -278,6 +334,45 @@ object ScriptService {
         // Returning the response lets scripts use the value directly too, which is not possible
         // in Postman but is convenient here because the callback runs synchronously.
         responseValue
+    }
+
+    /**
+     * pm.jsonPath(path, node?) mirrors the desktop runtime: one match returns the value,
+     * several matches return an array, no match returns undefined.
+     */
+    private fun jsonPathFunction(cx: Context, scope: Scriptable, body: String?): BaseFunction =
+        NativeFn("jsonPath") { args ->
+            val path = jsString(args.getOrNull(0))
+            val node = args.getOrNull(1)
+            val root = if (node != null && node !== Undefined.instance) {
+                val text = NativeJSON.stringify(cx, scope, node, null, null)
+                runCatching { JsonParser.parseString(jsString(text)) }.getOrNull()
+            } else {
+                body?.let { runCatching { JsonParser.parseString(it) }.getOrNull() }
+            }
+            if (root == null) {
+                Undefined.instance
+            } else {
+                val matches = JsonPathSupport.allAt(root, path)
+                when (matches.size) {
+                    0 -> Undefined.instance
+                    1 -> jsonToJs(cx, scope, matches[0])
+                    else -> cx.newArray(scope, matches.map { jsonToJs(cx, scope, it) }.toTypedArray())
+                }
+            }
+        }
+
+    private fun jsonToJs(cx: Context, scope: Scriptable, element: JsonElement): Any? = when {
+        element.isJsonNull -> null
+        element.isJsonPrimitive -> {
+            val primitive = element.asJsonPrimitive
+            when {
+                primitive.isBoolean -> primitive.asBoolean
+                primitive.isNumber -> primitive.asDouble
+                else -> primitive.asString
+            }
+        }
+        else -> NativeJSON.parse(cx, scope, element.toString(), { _, _, _, args -> args.firstOrNull() })
     }
 
     private fun responseObject(cx: Context, scope: Scriptable, result: HttpResult): ScriptableObject {

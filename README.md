@@ -8,13 +8,13 @@ A local-first API client for JetBrains IDEs. Design, send, and automate HTTP req
 
 - **Request workspace** — organize requests in collections and nested folders, with multi-tab editing and instant title sync.
 - **Full request editor** — method, URL, query params, headers, body (raw / form / multipart with file upload), authorization, pre-request scripts, and tests.
-- **Assertions and extraction** — declarative `status` / `time` / `body` / `header` / `jsonpath` assertions, plus `extract token = $.data.token` to store response values into the active environment.
+- **Assertions and extraction** — declarative `status` / `time` / `body` / `header` / `jsonpath` assertions, `extract token = $.data.token` lines, and Postman-style `pm.*` post-response scripts with `pm.response`, `pm.environment`, `pm.test` and `pm.jsonPath()`.
 - **Response viewer** — body, headers, cookies, test results, and per-request history with status, timing, and size.
 - **Environments and globals** — variables resolved at send time (`{{variable}}` syntax), switchable per environment.
 - **Collection and folder runner** — iterate a collection or folder with configurable iteration count, delay, and data files (CSV / JSON), with a Postman-style results table.
 - **Import and export** — Postman collections, environments and data dumps, Insomnia collections, OpenAPI / Swagger (JSON and YAML), `.http` / `.rest` files, and cURL commands.
 - **IDE integration** — import HTTP and OpenAPI files from the editor, generate requests from Spring controllers, and load variables from `application.yml`.
-- **Mock server** — serve generated responses for a collection or OpenAPI document on a local port.
+- **Mock server** — serve generated responses for a collection or OpenAPI document, or define your own routes (method, path, status, delay, headers, body) on a local port.
 - **Starred collections** — star collections to pin them above the rest, and optionally show only starred items.
 - **Stability and data safety** — shared workspace schema with automatic migration, crash-safe unsaved drafts, large-response protection, and credentials kept in the system credential store.
 - **Local storage** — the workspace lives in the IDE configuration directory and is shared by every IDE window on the machine.
@@ -26,6 +26,12 @@ A local-first API client for JetBrains IDEs. Design, send, and automate HTTP req
 - **Credential store** — tokens, passwords, API keys, OAuth client secrets and refresh tokens are stored in the OS credential store; `astra.xml` only contains `secure:` placeholders.
 - **Large responses** — previews are capped at 1.5M characters with an explicit truncation notice, while **Save…** exports the complete response body.
 - **Charset detection** — responses are decoded from the declared charset, BOM or byte content (UTF-8 / UTF-16 / GB18030 and other JVM charsets), so non-UTF-8 endpoints display correctly.
+
+## What's new in 0.4.2
+
+- **Post-response JavaScript** — the Tests tab now runs `pm.*` scripts, not just declarative lines. `pm.response`, `pm.environment`, `pm.variables`, `pm.test`, `pm.execution` and `console.*` are available, and variable writes are persisted to the active environment.
+- **`pm.jsonPath(path, node?)`** — mirrors the desktop runtime: one match returns the value, several matches return an array, no match returns `undefined`. The existing `jsonpath` assertion keyword and `set x jsonpath ...` lines keep working.
+- **Editable mock routes** — the Mock Server dialog has a *Custom routes* source with add / edit / delete for method, path, status, content type, delay, headers and body. Custom routes are stored in the workspace and restored after a restart.
 
 ## What's new in 0.4.1
 

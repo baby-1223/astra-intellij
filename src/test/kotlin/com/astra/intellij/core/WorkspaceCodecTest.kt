@@ -39,6 +39,33 @@ class WorkspaceCodecTest {
     }
 
     @Test
+    fun `mock routes survive a round trip and default to empty for old data`() {
+        val data = WorkspaceData(
+            mockRoutes = mutableListOf(
+                MockRoute(
+                    method = "GET",
+                    path = "/users",
+                    status = 201,
+                    contentType = "application/json",
+                    body = """{"ok":true}""",
+                    delayMs = 25,
+                    headers = mapOf("X-Mock" to "yes"),
+                ),
+            ),
+        )
+
+        val restored = codec.deserialize(codec.serialize(data)).mockRoutes.single()
+        assertEquals("GET", restored.method)
+        assertEquals("/users", restored.path)
+        assertEquals(201, restored.status)
+        assertEquals("""{"ok":true}""", restored.body)
+        assertEquals(25, restored.delayMs)
+        assertEquals(mapOf("X-Mock" to "yes"), restored.headers)
+
+        assertTrue(codec.deserialize("""{"collections":[]}""").mockRoutes.isEmpty())
+    }
+
+    @Test
     fun `deep copy uses json and does not share nested mutable state`() {
         val original = WorkspaceData(
             collections = mutableListOf(

@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.astra.apiclient</id>
     <name>Astra</name>
-    <version>0.4.1</version>
+    <version>0.4.2</version>
     <vendor url="https://github.com/compiler-says-no/astra-intellij">APost</vendor>
 
     <icon>/icons/astra-plugin.svg</icon>
@@ -20,11 +20,11 @@
             <li><b>Collections and folders</b>: organize requests in a shared tree with rename, duplicate, and delete.</li>
             <li><b>Environments</b>: named variable sets with <code>{{variable}}</code> substitution across URLs, headers, and bodies.</li>
             <li><b>Response viewer</b>: formatted body, headers, cookies, timing, and response size.</li>
-            <li><b>Tests and history</b>: lightweight assertions on status, body, and time, plus post-response scripts that capture values into environments.</li>
+            <li><b>Tests and history</b>: Postman-style <code>pm.*</code> post-response scripts with <code>pm.jsonPath()</code>, plus lightweight assertions on status, body, and time.</li>
             <li><b>Collection runner</b>: iterate a collection or folder with data files, delays, per-iteration results, and CSV/JSON/JUnit XML export for CI.</li>
             <li><b>Import and export</b>: Postman collections, environments and data dumps, Insomnia requests and full exports, OpenAPI 3.0 (JSON and YAML), cURL commands, and native Astra workspaces.</li>
             <li><b>IDE integration</b>: import <code>.http</code> / <code>.rest</code> files and OpenAPI documents, generate requests from Spring controllers, and load variables from <code>application.yml</code>.</li>
-            <li><b>Mock server</b>: serve generated responses for a collection or an OpenAPI document on a local port.</li>
+            <li><b>Mock server</b>: serve generated responses for a collection or an OpenAPI document, or define your own routes on a local port.</li>
         </ul>
 
         <h3>Designed for privacy</h3>
@@ -54,6 +54,12 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.4.2</h3>
+        <ul>
+            <li><b>Post-response JavaScript</b> — the Tests tab runs <code>pm.*</code> scripts with <code>pm.response</code>, <code>pm.environment</code>, <code>pm.variables</code>, <code>pm.test</code> and <code>pm.execution</code>; the declarative <code>status</code> / <code>jsonpath</code> / <code>extract</code> lines keep working.</li>
+            <li><b><code>pm.jsonPath(path, node?)</code></b> — same semantics as the desktop app: one match returns the value, several return an array, no match returns <code>undefined</code>. The existing <code>jsonpath</code> assertion keyword is unchanged.</li>
+            <li><b>Editable mock routes</b> — the Mock Server dialog gains a <i>Custom routes</i> source where routes can be added, edited and deleted (method, path, status, content type, delay, headers, body). Custom routes are saved in the workspace and restored on restart.</li>
+        </ul>
         <h3>0.4.1</h3>
         <ul>
             <li>Fixed the horizontal divider between the request editor and the response panel. It can now be dragged all the way up; the response area is no longer clamped by the tabbed pane's minimum and preferred size.</li>

@@ -28,8 +28,12 @@ object PostResponseService {
         vars: MutableMap<String, String>,
         environment: AstraEnvironment?,
     ): List<Update> {
+        val active = lines.map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
+        if (ScriptService.looksLikeJavaScript(active)) {
+            return runScript(active.joinToString("\n"), result, vars, environment)
+        }
         val updates = mutableListOf<Update>()
-        lines.map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }.forEach { line ->
+        active.forEach { line ->
             val tokens = tokenize(line)
             if (tokens.isEmpty()) return@forEach
             when (tokens[0].lowercase()) {
@@ -50,6 +54,29 @@ object PostResponseService {
             }
         }
         return updates
+    }
+
+    /** Runs a PM-style script and reports which variables changed. */
+    private fun runScript(
+        script: String,
+        result: HttpResult,
+        vars: MutableMap<String, String>,
+        environment: AstraEnvironment?,
+    ): List<Update> {
+        val beforeEnv = environment?.variables?.toMap() ?: emptyMap()
+        val beforeVars = vars.toMap()
+        val merged = ScriptService.runPostResponse(script, result, vars, environment)
+        val after = environment?.variables ?: merged
+        val names = beforeEnv.keys + beforeVars.keys + after.keys
+        return names.mapNotNull { name ->
+            val old = beforeEnv[name] ?: beforeVars[name]
+            val new = after[name]
+            when {
+                new == null -> if (old == null) null else Update(name, "")
+                new != old -> Update(name, new)
+                else -> null
+            }
+        }.distinctBy { it.name }
     }
 
     private fun extract(tokens: List<String>, result: HttpResult, vars: Map<String, String>): String? {

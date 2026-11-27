@@ -75,6 +75,51 @@ class ScriptServiceTest {
     }
 
     @Test
+    fun `post-response scripts expose pm jsonPath over the response body`() {
+        val environment = AstraEnvironment(name = "dev")
+        val result = HttpResult(
+            status = 200,
+            statusText = "OK",
+            body = """{"data":{"token":"t-1"},"items":[{"id":1},{"id":2}]}""".toByteArray(),
+            elapsedMs = 12,
+        )
+
+        val vars = ScriptService.runPostResponse(
+            """
+            pm.test('token exists', function () {
+              if (!pm.jsonPath('${'$'}.data.token')) throw new Error('missing token');
+            });
+            pm.environment.set('token', pm.jsonPath('${'$'}.data.token'));
+            var ids = pm.jsonPath('${'$'}.items[*].id');
+            pm.environment.set('first', String(ids[0]));
+            pm.environment.set('count', String(ids.length));
+            """.trimIndent(),
+            result,
+            emptyMap(),
+            environment,
+        )
+
+        assertEquals("t-1", vars["token"])
+        assertEquals("t-1", environment.variables["token"])
+        assertEquals("1", environment.variables["first"])
+        assertEquals("2", environment.variables["count"])
+    }
+
+    @Test
+    fun `post-response scripts fail when pm test throws`() {
+        val result = HttpResult(status = 500, body = "{}".toByteArray())
+        val error = assertThrows(IllegalStateException::class.java) {
+            ScriptService.runPostResponse(
+                "pm.test('status', function () { if (pm.response.code !== 200) throw new Error('bad status'); });",
+                result,
+                emptyMap(),
+                AstraEnvironment(name = "dev"),
+            )
+        }
+        assertTrue(error.message.orEmpty().contains("bad status"))
+    }
+
+    @Test
     fun `es6 syntax such as const arrow functions and template literals is supported`() {
         val vars = PreRequestService.execute(
             listOf(

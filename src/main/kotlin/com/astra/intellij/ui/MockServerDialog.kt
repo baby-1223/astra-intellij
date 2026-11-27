@@ -29,6 +29,7 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JSpinner
 import javax.swing.JTable
+import javax.swing.JTextArea
 import javax.swing.JTextField
 import javax.swing.SpinnerNumberModel
 import javax.swing.Timer
@@ -55,12 +56,18 @@ class MockServerDialog(
     private val baseUrlField = JTextField().apply { isEditable = false }
     private val copyButton = JButton("Copy")
     private val routeModel = ReadOnlyTableModel(arrayOf("Method", "Path", "Status", "Content-Type"))
+    private val routeTable = JTable(routeModel)
     private val logModel = ReadOnlyTableModel(arrayOf("Time", "Method", "Path", "Status", "ms", "Matched"))
     private val logTimer = Timer(1000) { refreshLog() }
+    private val customRoutes = mutableListOf<MockRoute>()
+    private val addRouteButton = JButton("Add")
+    private val editRouteButton = JButton("Edit")
+    private val deleteRouteButton = JButton("Delete")
 
     init {
         title = "Astra Mock Server"
         isModal = false
+        customRoutes.addAll(workspace.data.mockRoutes)
         init()
         applyCollections()
         startButton.addActionListener { toggleServer() }
@@ -72,9 +79,16 @@ class MockServerDialog(
                 statusLabel.text = "Base URL copied"
             }
         }
+        addRouteButton.addActionListener { addRoute() }
+        editRouteButton.addActionListener { editSelectedRoute() }
+        deleteRouteButton.addActionListener { deleteSelectedRoute() }
         sourceBox.addActionListener {
-            openApiButton.isEnabled = (sourceBox.selectedItem as? SourceOption)?.collection == null
+            openApiButton.isEnabled = (sourceBox.selectedItem as? SourceOption)?.collection == null &&
+                (sourceBox.selectedItem as? SourceOption)?.custom != true
+            if (isCustomSource()) populateCustomRoutes() else populateGeneratedRoutes()
+            updateRouteButtons()
         }
+        updateRouteButtons()
     }
 
     override fun createActions(): Array<Action> = emptyArray()
@@ -144,11 +158,29 @@ class MockServerDialog(
 
     private fun buildTabs(): JComponent {
         val tabs = JBTabbedPane()
-        tabs.addTab("Routes", JBScrollPane(JTable(routeModel).apply {
-            setShowGrid(false)
-            intercellSpacing = Dimension(0, 0)
-            rowHeight = JBUI.scale(22)
-        }))
+        val routeButtons = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+            border = JBUI.Borders.emptyBottom(4)
+            add(JPanel().apply {
+                layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.X_AXIS)
+                add(addRouteButton)
+                add(javax.swing.Box.createHorizontalStrut(JBUI.scale(6)))
+                add(editRouteButton)
+                add(javax.swing.Box.createHorizontalStrut(JBUI.scale(6)))
+                add(deleteRouteButton)
+            }, BorderLayout.WEST)
+            add(JBLabel("Optional: edit routes, then Start").apply {
+                foreground = JBColor.GRAY
+            }, BorderLayout.EAST)
+        }
+        val routesPanel = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
+            add(routeButtons, BorderLayout.NORTH)
+            add(JBScrollPane(routeTable.apply {
+                setShowGrid(false)
+                intercellSpacing = Dimension(0, 0)
+                rowHeight = JBUI.scale(22)
+            }), BorderLayout.CENTER)
+        }
+        tabs.addTab("Routes", routesPanel)
         tabs.addTab("Requests", JBScrollPane(JTable(logModel).apply {
             setShowGrid(false)
             intercellSpacing = Dimension(0, 0)
@@ -162,6 +194,7 @@ class MockServerDialog(
             sourceBox.addItem(SourceOption(collection.name, collection))
         }
         sourceBox.addItem(SourceOption("OpenAPI document…", null))
+        sourceBox.addItem(SourceOption("Custom routes", null, custom = true))
         if (workspace.data.collections.isEmpty()) sourceBox.selectedIndex = 0
     }
 
@@ -191,6 +224,12 @@ class MockServerDialog(
         val delay = (delaySpinner.value as Number).toInt()
         val option = sourceBox.selectedItem as? SourceOption
             ?: throw IllegalArgumentException("Choose a collection or an OpenAPI document")
+        if (option.custom) {
+            if (customRoutes.isEmpty()) {
+                throw IllegalArgumentException("Add at least one custom route before starting")
+            }
+            return MockSpec("Custom Mock", customRoutes.toList())
+        }
         return if (option.collection != null) {
             MockSpecLoader.fromCollection(option.collection, delay)
         } else {
@@ -226,6 +265,7 @@ class MockServerDialog(
         sourceBox.isEnabled = false
         portSpinner.isEnabled = false
         delaySpinner.isEnabled = false
+        updateRouteButtons()
         logTimer.start()
     }
 
@@ -240,6 +280,7 @@ class MockServerDialog(
         sourceBox.isEnabled = true
         portSpinner.isEnabled = true
         delaySpinner.isEnabled = true
+        updateRouteButtons()
     }
 
     private fun populateRoutes(routes: List<MockRoute>) {
@@ -247,6 +288,59 @@ class MockServerDialog(
         routes.forEach { route ->
             routeModel.addRow(arrayOf<Any>(route.method, route.path, route.status, route.contentType))
         }
+    }
+
+    private fun isCustomSource(): Boolean =
+        (sourceBox.selectedItem as? SourceOption)?.custom == true
+
+    private fun populateCustomRoutes() {
+        routeModel.rowCount = 0
+        customRoutes.forEach { route ->
+            routeModel.addRow(arrayOf<Any>(route.method, route.path, route.status, route.contentType))
+        }
+    }
+
+    private fun populateGeneratedRoutes() {
+        val spec = runCatching { buildSpec() }.getOrNull()
+        if (spec != null) populateRoutes(spec.routes) else routeModel.rowCount = 0
+    }
+
+    private fun updateRouteButtons() {
+        val editable = isCustomSource() && server == null
+        addRouteButton.isEnabled = editable
+        editRouteButton.isEnabled = editable
+        deleteRouteButton.isEnabled = editable
+    }
+
+    private fun addRoute() {
+        val dialog = RouteEditorDialog(null)
+        if (!dialog.showAndGet()) return
+        customRoutes.add(dialog.result())
+        persistCustomRoutes()
+        populateCustomRoutes()
+    }
+
+    private fun editSelectedRoute() {
+        val index = routeTable.selectedRow
+        if (index !in customRoutes.indices) return
+        val dialog = RouteEditorDialog(customRoutes[index])
+        if (!dialog.showAndGet()) return
+        customRoutes[index] = dialog.result()
+        persistCustomRoutes()
+        populateCustomRoutes()
+    }
+
+    private fun deleteSelectedRoute() {
+        val index = routeTable.selectedRow
+        if (index !in customRoutes.indices) return
+        customRoutes.removeAt(index)
+        persistCustomRoutes()
+        populateCustomRoutes()
+    }
+
+    private fun persistCustomRoutes() {
+        workspace.data.mockRoutes = customRoutes.toMutableList()
+        workspace.notifyChanged(this)
     }
 
     private fun refreshLog() {
@@ -269,7 +363,80 @@ class MockServerDialog(
         }
     }
 
-    private data class SourceOption(val label: String, val collection: RequestCollection?) {
+    private class RouteEditorDialog(existing: MockRoute?) : DialogWrapper(true) {
+        private val methodBox = JComboBox(
+            arrayOf("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"),
+        ).apply { selectedItem = existing?.method ?: "GET" }
+        private val pathField = JTextField(existing?.path ?: "/api/example", 32)
+        private val statusSpinner =
+            JSpinner(SpinnerNumberModel(existing?.status ?: 200, 100, 599, 1))
+        private val contentTypeField =
+            JTextField(existing?.contentType ?: "application/json", 28)
+        private val delaySpinner =
+            JSpinner(SpinnerNumberModel(existing?.delayMs ?: 0, 0, 60000, 50))
+        private val bodyArea = JTextArea(existing?.body ?: "{}", 12, 52).apply {
+            font = java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12)
+        }
+
+        init {
+            title = if (existing == null) "Add Mock Route" else "Edit Mock Route"
+            init()
+        }
+
+        override fun createCenterPanel(): JComponent {
+            val panel = JPanel(GridBagLayout())
+            val constraints = GridBagConstraints().apply {
+                insets = Insets(JBUI.scale(4), JBUI.scale(4), JBUI.scale(4), JBUI.scale(4))
+                anchor = GridBagConstraints.WEST
+                fill = GridBagConstraints.HORIZONTAL
+            }
+
+            fun add(component: JComponent, x: Int, y: Int, width: Int) {
+                constraints.gridx = x
+                constraints.gridy = y
+                constraints.gridwidth = width
+                constraints.weightx = if (width > 1) 1.0 else 0.0
+                panel.add(component, constraints)
+                constraints.gridwidth = 1
+                constraints.weightx = 0.0
+            }
+
+            add(JBLabel("Method"), 0, 0, 1)
+            add(methodBox, 1, 0, 1)
+            add(JBLabel("Status"), 2, 0, 1)
+            add(statusSpinner, 3, 0, 1)
+            add(JBLabel("Path"), 0, 1, 1)
+            add(pathField, 1, 1, 3)
+            add(JBLabel("Content-Type"), 0, 2, 1)
+            add(contentTypeField, 1, 2, 2)
+            add(JBLabel("Delay (ms)"), 3, 2, 1)
+            add(delaySpinner, 4, 2, 1)
+            add(JBLabel("Body"), 0, 3, 1)
+            add(JBScrollPane(bodyArea).apply {
+                preferredSize = JBUI.size(540, 190)
+            }, 1, 3, 4)
+            return panel
+        }
+
+        fun result(): MockRoute {
+            val rawPath = pathField.text.trim().ifBlank { "/" }
+            val path = if (rawPath.startsWith("/")) rawPath else "/$rawPath"
+            return MockRoute(
+                method = methodBox.selectedItem.toString(),
+                path = path.substringBefore('?'),
+                status = (statusSpinner.value as Number).toInt(),
+                contentType = contentTypeField.text.trim().ifBlank { "application/json" },
+                body = bodyArea.text,
+                delayMs = (delaySpinner.value as Number).toInt(),
+            )
+        }
+    }
+
+    private data class SourceOption(
+        val label: String,
+        val collection: RequestCollection?,
+        val custom: Boolean = false,
+    ) {
         override fun toString(): String = label
     }
 
