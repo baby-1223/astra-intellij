@@ -65,10 +65,18 @@ class RequestSessionPanel(
     var onTitleChanged: (() -> Unit)? = null
 
     init {
+        // JTabbedPane reports a preferred-size based minimum; without clearing it the divider
+        // cannot be dragged up because the response panel below refuses to shrink.
+        editor.minimumSize = java.awt.Dimension(0, 0)
+        response.minimumSize = java.awt.Dimension(0, 0)
         val split = com.intellij.ui.JBSplitter(true, 0.48f).apply {
             dividerWidth = 7
             setShowDividerIcon(true)
+            // Let the divider move freely instead of being clamped to the tabbed pane's minimum.
+            setHonorComponentsMinimumSize(false)
+            setHonorComponentsPreferredSize(false)
             divider.border = javax.swing.BorderFactory.createMatteBorder(1, 0, 1, 0, com.intellij.ui.JBColor.border())
+            divider.cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.N_RESIZE_CURSOR)
             firstComponent = editor
             secondComponent = response
         }

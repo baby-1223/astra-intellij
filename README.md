@@ -27,6 +27,10 @@ A local-first API client for JetBrains IDEs. Design, send, and automate HTTP req
 - **Large responses** — previews are capped at 1.5M characters with an explicit truncation notice, while **Save…** exports the complete response body.
 - **Charset detection** — responses are decoded from the declared charset, BOM or byte content (UTF-8 / UTF-16 / GB18030 and other JVM charsets), so non-UTF-8 endpoints display correctly.
 
+## What's new in 0.4.1
+
+- The divider between the request editor and the response panel can be dragged freely; the response area is no longer clamped to a fixed minimum height.
+
 ## What's new in 0.4.0
 
 - **Spring generation overhaul** — 39 parsing gaps fixed: fully qualified and composed annotations, constants and multi-path mappings, inherited class paths, controller interfaces, cross-file DTOs, Java records, inheritance, non-private fields, `@JsonProperty` names, enum samples and cycle protection.
