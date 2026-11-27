@@ -3,6 +3,7 @@
 A local-first API client for JetBrains IDEs. Design, send, and automate HTTP requests without leaving your IDE — no account, no cloud sync, no telemetry.
 
 [![Build](https://github.com/compiler-says-no/astra-intellij/actions/workflows/build.yml/badge.svg)](https://github.com/compiler-says-no/astra-intellij/actions/workflows/build.yml)
+[![JetBrains Marketplace](https://img.shields.io/badge/JetBrains%20Marketplace-Astra-000000?logo=jetbrains)](https://plugins.jetbrains.com/plugin/36348-astra)
 
 ## Features
 
@@ -101,7 +102,7 @@ A local-first API client for JetBrains IDEs. Design, send, and automate HTTP req
 
 ### From JetBrains Marketplace
 
-Search for **Astra** in `Settings → Plugins → Marketplace`, or install from the plugin page once published.
+Install from the [plugin page](https://plugins.jetbrains.com/plugin/36348-astra), or search for **Astra** in `Settings → Plugins → Marketplace`.
 
 ### From a release build
 
